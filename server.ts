@@ -103,7 +103,16 @@ app.use((req, res, next) => {
 });
 
 // Health check
+// Support both /health and /api/health for compatibility
 app.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Server is running',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'Server is running',
