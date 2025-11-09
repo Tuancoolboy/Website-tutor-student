@@ -49,8 +49,16 @@ export class JSONStorage {
       } else {
         return await this.readFromLocal(filename);
       }
-    } catch (error) {
-      console.error(`Error reading ${filename}:`, error);
+    } catch (error: any) {
+      console.error(`[Storage] Error reading ${filename}:`, error.message);
+      // For critical files like users.json, we should throw the error
+      // instead of returning empty array to avoid silent failures
+      if (filename === 'users.json' || filename === 'messages.json' || filename === 'conversations.json') {
+        console.error(`[Storage] Critical file ${filename} failed to load. Throwing error.`);
+        throw error;
+      }
+      // For non-critical files, return empty array
+      console.warn(`[Storage] Non-critical file ${filename} failed to load. Returning empty array.`);
       return [];
     }
   }
@@ -319,22 +327,46 @@ export class JSONStorage {
 
   private async readFromBlob<T>(filename: string): Promise<T[]> {
     try {
+      // Check if BLOB_READ_WRITE_TOKEN is set
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        console.error(`[Blob Storage] BLOB_READ_WRITE_TOKEN is not set! Cannot read ${filename}`);
+        throw new Error(`BLOB_READ_WRITE_TOKEN is required to read from Blob Storage. Please set it in environment variables.`);
+      }
+
       // Try data/${filename} first (preferred location)
       const blobPath = `data/${filename}`;
+      console.log(`[Blob Storage] Attempting to read ${filename} from ${blobPath}`);
       
       // List blobs with exact path match
-      const { blobs } = await list({ prefix: blobPath });
+      let blobs: any[];
+      try {
+        const result = await list({ prefix: blobPath });
+        blobs = result.blobs;
+        console.log(`[Blob Storage] Found ${blobs.length} blobs with prefix ${blobPath}`);
+      } catch (listError: any) {
+        console.error(`[Blob Storage] Error listing blobs for ${blobPath}:`, listError.message);
+        throw new Error(`Failed to list blobs: ${listError.message}. Please verify BLOB_READ_WRITE_TOKEN is correct.`);
+      }
       
       // Find exact match (not just prefix match)
       const targetBlob = blobs.find(blob => blob.pathname === blobPath);
       
       if (targetBlob) {
+        console.log(`[Blob Storage] Found blob at ${blobPath}, URL: ${targetBlob.url}`);
         // Fetch the blob content
-        const response = await fetch(targetBlob.url);
+        let response: Response;
+        try {
+          response = await fetch(targetBlob.url);
+        } catch (fetchError: any) {
+          console.error(`[Blob Storage] Error fetching blob from ${targetBlob.url}:`, fetchError.message);
+          throw new Error(`Failed to fetch blob: ${fetchError.message}`);
+        }
         
         // Check if response is OK and content-type is JSON
         if (!response.ok) {
-          throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}`);
+          const errorText = await response.text().catch(() => 'Unknown error');
+          console.error(`[Blob Storage] Failed to fetch blob: ${response.status} ${response.statusText}`, errorText.substring(0, 200));
+          throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}. ${errorText.substring(0, 100)}`);
         }
         
         const contentType = response.headers.get('content-type') || '';
@@ -343,20 +375,38 @@ export class JSONStorage {
         // Validate that content is valid JSON (not HTML or error page)
         const trimmedContent = content.trim();
         if (!trimmedContent.startsWith('[') && !trimmedContent.startsWith('{')) {
-          console.error(`Invalid JSON format for ${blobPath}: content starts with "${trimmedContent.substring(0, 50)}"`);
-          console.error(`Content-Type: ${contentType}, URL: ${targetBlob.url}`);
-          // Try root level as fallback
-          throw new Error('Invalid JSON format, trying root level');
+          console.error(`[Blob Storage] Invalid JSON format for ${blobPath}: content starts with "${trimmedContent.substring(0, 100)}"`);
+          console.error(`[Blob Storage] Content-Type: ${contentType}, URL: ${targetBlob.url}`);
+          console.error(`[Blob Storage] Content length: ${content.length} bytes`);
+          throw new Error(`Invalid JSON format for ${blobPath}. Content appears to be ${contentType} instead of JSON. Please verify the file was uploaded correctly.`);
         }
         
-        return JSON.parse(content);
+        try {
+          const parsed = JSON.parse(content);
+          console.log(`[Blob Storage] Successfully read ${filename}, found ${Array.isArray(parsed) ? parsed.length : 'N/A'} items`);
+          return parsed;
+        } catch (parseError: any) {
+          console.error(`[Blob Storage] JSON parse error for ${blobPath}:`, parseError.message);
+          console.error(`[Blob Storage] Content preview: ${trimmedContent.substring(0, 200)}`);
+          throw new Error(`Failed to parse JSON from ${blobPath}: ${parseError.message}`);
+        }
       }
       
       // If not found at data/, try root level (backward compatibility)
-      const { blobs: rootBlobs } = await list({ prefix: filename });
+      console.log(`[Blob Storage] Blob not found at ${blobPath}, trying root level...`);
+      let rootBlobs: any[];
+      try {
+        const result = await list({ prefix: filename });
+        rootBlobs = result.blobs;
+      } catch (listError: any) {
+        console.error(`[Blob Storage] Error listing blobs for root ${filename}:`, listError.message);
+        throw new Error(`Failed to list blobs at root level: ${listError.message}`);
+      }
+      
       const rootBlob = rootBlobs.find(blob => blob.pathname === filename);
       
       if (rootBlob) {
+        console.log(`[Blob Storage] Found blob at root level: ${filename}`);
         const response = await fetch(rootBlob.url);
         
         if (!response.ok) {
@@ -369,26 +419,32 @@ export class JSONStorage {
         // Validate that content is valid JSON
         const trimmedContent = content.trim();
         if (!trimmedContent.startsWith('[') && !trimmedContent.startsWith('{')) {
-          console.error(`Invalid JSON format for ${filename} at root: content starts with "${trimmedContent.substring(0, 50)}"`);
-          console.error(`Content-Type: ${contentType}, URL: ${rootBlob.url}`);
-          console.error(`This might indicate the blob contains HTML or incorrect content. Please verify the file was uploaded correctly.`);
-          return [];
+          console.error(`[Blob Storage] Invalid JSON format for ${filename} at root: content starts with "${trimmedContent.substring(0, 50)}"`);
+          console.error(`[Blob Storage] Content-Type: ${contentType}, URL: ${rootBlob.url}`);
+          throw new Error(`Invalid JSON format for ${filename} at root level. Please verify the file was uploaded correctly.`);
         }
         
-        return JSON.parse(content);
+        try {
+          const parsed = JSON.parse(content);
+          console.log(`[Blob Storage] Successfully read ${filename} from root level, found ${Array.isArray(parsed) ? parsed.length : 'N/A'} items`);
+          return parsed;
+        } catch (parseError: any) {
+          console.error(`[Blob Storage] JSON parse error for ${filename} at root:`, parseError.message);
+          throw new Error(`Failed to parse JSON from ${filename} at root level: ${parseError.message}`);
+        }
       }
       
       // File doesn't exist at either location
-      console.warn(`No blob found for ${filename} at ${blobPath} or root level`);
-      return [];
+      const errorMsg = `No blob found for ${filename} at ${blobPath} or root level. Please upload the file to Blob Storage.`;
+      console.error(`[Blob Storage] ${errorMsg}`);
+      console.error(`[Blob Storage] Available blobs with prefix 'data/':`, blobs.map(b => b.pathname).join(', '));
+      throw new Error(errorMsg);
     } catch (error: any) {
-      console.error(`Blob read error for ${filename}:`, error);
-      // If it's a JSON parse error, log more details
-      if (error.message?.includes('JSON') || error.message?.includes('Unexpected token')) {
-        console.error(`JSON parse error - this might indicate the blob contains HTML or incorrect content`);
-        console.error(`Please verify that ${filename} was uploaded correctly to blob storage at path: data/${filename}`);
-      }
-      return [];
+      console.error(`[Blob Storage] Error reading ${filename}:`, error.message);
+      console.error(`[Blob Storage] Error stack:`, error.stack);
+      // Re-throw the error instead of returning empty array
+      // This allows the calling code to handle the error appropriately
+      throw error;
     }
   }
 
