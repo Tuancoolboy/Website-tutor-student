@@ -73,14 +73,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   while (attempts < maxAttempts) {
     try {
       // Get all messages for this conversation
-      const allMessages = await storage.findAll<Message>('messages.json');
+      const allMessages = await storage.read<Message>('messages.json');
       const conversationMessages = allMessages
-        .filter(m => m.conversationId === conversationId)
-        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        .filter((m: Message) => m.conversationId === conversationId)
+        .sort((a: Message, b: Message) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
       // If lastMessageId is provided, get only new messages after it
       if (lastMessageId && typeof lastMessageId === 'string') {
-        const lastIndex = conversationMessages.findIndex(m => m.id === lastMessageId);
+        const lastIndex = conversationMessages.findIndex((m: Message) => m.id === lastMessageId);
         
         if (lastIndex === -1) {
           // Last message not found, return all messages
