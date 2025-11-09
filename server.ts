@@ -82,8 +82,10 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? '*' : config.frontend.url,
-  credentials: true
+  origin: process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? '*' : config.frontend.url),
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -267,9 +269,15 @@ app.use((req, res) => {
 // Error handler
 app.use(errorHandler);
 
-// Start server (only in development, Vercel handles this in production)
+// Start server
 // Note: For WebSocket support, deploy ws-server.ts separately on Railway/Render
-if (process.env.NODE_ENV !== 'production') {
+// On Render/Railway, this will run as a traditional server
+// On Vercel, this file is used as a serverless function handler (via api/index.ts)
+// Vercel serverless functions don't call app.listen(), they use app as a handler
+
+// Only start server if not running on Vercel (serverless)
+// Vercel sets VERCEL environment variable
+if (!process.env.VERCEL) {
   const PORT = config.api.port;
   app.listen(PORT, () => {
     console.log(`

@@ -28,7 +28,14 @@ const Register: React.FC = () => {
   const navigate = useNavigate()
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    fullName: string;
+    email: string;
+    password: string;
+    confirmPassword: string;
+    role: 'student' | 'tutor' | 'management';
+    agreeTerms: boolean;
+  }>({
     fullName: '',
     email: '',
     password: '',

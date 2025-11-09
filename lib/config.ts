@@ -29,7 +29,8 @@ export const config = {
 
   // API Configuration
   api: {
-    port: parseInt(process.env.API_PORT || '3000'),
+    // Support both PORT (Render/Railway) and API_PORT (local)
+    port: parseInt(process.env.PORT || process.env.API_PORT || '3000'),
     basePath: '/api'
   },
 

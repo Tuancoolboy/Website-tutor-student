@@ -5,10 +5,12 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { WEBSOCKET_URL as ENV_WEBSOCKET_URL } from '../env';
 
-// Get WebSocket URL from environment or use default
+// Get WebSocket URL from environment
+// Priority: window.__WEBSOCKET_URL__ > env.ts > default
 const WEBSOCKET_URL = (typeof window !== 'undefined' && (window as any).__WEBSOCKET_URL__) 
-  || (typeof process !== 'undefined' && process.env?.VITE_WEBSOCKET_URL)
+  || ENV_WEBSOCKET_URL
   || 'http://localhost:3001';
 
 interface UseOnlineStatusOptions {
