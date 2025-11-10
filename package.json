@@ -58,6 +58,7 @@
     "tailwindcss-animate": "^1.0.7",
     "uuid": "^13.0.0",
     "vite": "^4.5.0",
+    "@vitejs/plugin-react": "^4.1.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -68,7 +69,6 @@
     "@types/react-dom": "^18.3.1",
     "@typescript-eslint/eslint-plugin": "^6.10.0",
     "@typescript-eslint/parser": "^6.10.0",
-    "@vitejs/plugin-react": "^4.1.1",
     "autoprefixer": "^10.4.16",
     "eslint": "^8.57.1",
     "eslint-plugin-react-hooks": "^4.6.0",
