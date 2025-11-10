@@ -60,8 +60,6 @@ const Messages: React.FC = () => {
   const [showConversationMenu, setShowConversationMenu] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const shouldAutoScrollRef = useRef(true)
-  const isUserScrollingRef = useRef(false)
   const previousConversationIdRef = useRef<string | null>(null)
   const isLoadingActiveUsersRef = useRef(false)
   const activeUsersIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -233,7 +231,9 @@ const Messages: React.FC = () => {
     const loadActiveUsers = async () => {
       // Prevent multiple simultaneous calls
       if (isLoadingActiveUsersRef.current) {
-        console.log('[Tutor Messages] Active users already loading, skipping...')
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[Tutor Messages] Active users already loading, skipping...')
+        }
         return
       }
       
@@ -357,96 +357,10 @@ const Messages: React.FC = () => {
   // Note: loadHistory is automatically called by useLongPolling hook when conversationId changes
   // No need to call it manually here to avoid duplicate calls
 
-  // Check if user is near bottom of scroll container
-  const isNearBottom = (container: HTMLDivElement, threshold: number = 100) => {
-    const { scrollTop, scrollHeight, clientHeight } = container
-    return scrollHeight - scrollTop - clientHeight < threshold
-  }
-
-  // Handle scroll event to detect user scrolling
+  // Track conversation changes (no auto-scroll)
   useEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
-
-    const handleScroll = () => {
-      if (container) {
-        // If user scrolls up, disable auto-scroll temporarily
-        if (!isNearBottom(container, 150)) {
-          shouldAutoScrollRef.current = false
-          isUserScrollingRef.current = true
-        } else {
-          // If user scrolls back to bottom, re-enable auto-scroll
-          shouldAutoScrollRef.current = true
-          isUserScrollingRef.current = false
-        }
-      }
-    }
-
-    container.addEventListener('scroll', handleScroll)
-    return () => {
-      container.removeEventListener('scroll', handleScroll)
-    }
+    previousConversationIdRef.current = selectedConversationId
   }, [selectedConversationId])
-
-  // Auto-scroll to bottom only when:
-  // 1. Conversation changes (new conversation selected)
-  // 2. New message arrives AND user is near bottom
-  useEffect(() => {
-    if (messagesContainerRef.current && messages.length > 0) {
-      // Check if conversation actually changed
-      const conversationChanged = previousConversationIdRef.current !== selectedConversationId
-      
-      if (conversationChanged) {
-        // Conversation changed - always scroll to bottom
-        previousConversationIdRef.current = selectedConversationId
-        requestAnimationFrame(() => {
-          if (messagesContainerRef.current) {
-            const container = messagesContainerRef.current
-            container.scrollTo({
-              top: container.scrollHeight,
-              behavior: 'auto'
-            })
-            shouldAutoScrollRef.current = true
-            isUserScrollingRef.current = false
-          }
-        })
-      } else {
-        // Same conversation - only scroll if user is near bottom
-        const container = messagesContainerRef.current
-        if (shouldAutoScrollRef.current || isNearBottom(container, 200)) {
-          requestAnimationFrame(() => {
-            if (messagesContainerRef.current && shouldAutoScrollRef.current) {
-              const container = messagesContainerRef.current
-              container.scrollTo({
-                top: container.scrollHeight,
-                behavior: 'smooth'
-              })
-            }
-          })
-        }
-      }
-    }
-  }, [messages, selectedConversationId])
-
-  // Reset scroll behavior when conversation changes
-  useEffect(() => {
-    if (previousConversationIdRef.current !== selectedConversationId) {
-      shouldAutoScrollRef.current = true
-      isUserScrollingRef.current = false
-      previousConversationIdRef.current = selectedConversationId
-    }
-  }, [selectedConversationId])
-
-  // Debug: Log messages when they change
-  useEffect(() => {
-    if (selectedConversationId) {
-      console.log('[Tutor Messages] Messages updated:', messages.length, 'messages for conversation:', selectedConversationId)
-      console.log('[Tutor Messages] Current user ID:', currentUser?.userId || currentUser?.id)
-      if (messages.length > 0) {
-        console.log('[Tutor Messages] Sample messages:', messages.slice(0, 3).map(m => ({ id: m.id, content: m.content, senderId: m.senderId })))
-      }
-    }
-  }, [messages, selectedConversationId, currentUser])
 
   // Show loading screen while checking authentication
   if (isCheckingAuth || !currentUser) {
@@ -568,10 +482,8 @@ const Messages: React.FC = () => {
   const loadAvailableUsers = async () => {
     try {
       setLoadingUsers(true)
-      console.log('[Tutor Messages] Loading available users...')
       // Load all users (students, tutors, management) - không filter theo role
       const response = await usersAPI.list({ limit: 100 })
-      console.log('[Tutor Messages] Users API response:', response)
       
       // Handle different response formats
       // API returns: { data: [...], pagination: {...} } OR { success: true, data: [...] }
@@ -594,15 +506,12 @@ const Messages: React.FC = () => {
         usersList = response.data.data
       }
       
-      console.log('[Tutor Messages] Parsed users list:', usersList.length, 'users')
-      
       if (usersList.length > 0) {
         const currentUserId = currentUser?.userId || currentUser?.id || ''
         // Chỉ filter ra current user - hiển thị tất cả users khác (kể cả đã có conversation)
         const filteredUsers = usersList.filter((user: any) => 
           user && user.id && user.id !== currentUserId
         )
-        console.log('[Tutor Messages] Filtered users (excluding current user):', filteredUsers.length, 'users')
         setAvailableUsers(filteredUsers)
       } else {
         console.warn('[Tutor Messages] No users found in response. Response structure:', Object.keys(response || {}))
@@ -752,46 +661,16 @@ const Messages: React.FC = () => {
     }
     
     const messageContent = newMessage.trim()
-    console.log('[Tutor Messages] Sending message:', messageContent, 'to conversation:', selectedConversationId)
     try {
       setSending(true)
       setNewMessage('') // Clear input immediately for better UX
       
-      const result = await sendMessage(messageContent)
-      console.log('[Tutor Messages] Message sent successfully:', result)
-      console.log('[Tutor Messages] Current messages count:', messages.length)
-      
-      // Scroll to bottom immediately after sending (user sent message, so always scroll)
-      shouldAutoScrollRef.current = true
-      if (messagesContainerRef.current) {
-        requestAnimationFrame(() => {
-          if (messagesContainerRef.current) {
-            const container = messagesContainerRef.current
-            container.scrollTo({
-              top: container.scrollHeight,
-              behavior: 'smooth'
-            })
-          }
-        })
-      }
+      await sendMessage(messageContent)
       
       // Force a small delay and then reload history to ensure message appears
       // This is a fallback in case the message wasn't added to state
       setTimeout(async () => {
-        console.log('[Tutor Messages] Reloading history after send')
         await loadHistory()
-        // Scroll again after reload only if user is near bottom
-        if (messagesContainerRef.current && shouldAutoScrollRef.current) {
-          requestAnimationFrame(() => {
-            if (messagesContainerRef.current && shouldAutoScrollRef.current) {
-              const container = messagesContainerRef.current
-              container.scrollTo({
-                top: container.scrollHeight,
-                behavior: 'smooth'
-              })
-            }
-          })
-        }
       }, 500)
       
       // Reload conversations to update lastMessage after sending
