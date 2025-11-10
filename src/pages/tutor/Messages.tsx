@@ -70,13 +70,14 @@ const Messages: React.FC = () => {
   const { onlineUsers, isUserOnline, isConnected: isWebSocketConnected } = useOnlineStatus({ enabled: true })
 
   // Debounce reload conversations to avoid too many API calls
+  // Optimized for 2-3 users testing - reduced frequency to prevent lag
   const reloadConversationsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastReloadTimeRef = useRef<number>(0)
   const reloadConversations = useCallback(async (force: boolean = false) => {
-    // Prevent too frequent reloads - only reload at most once every 5 seconds
+    // Prevent too frequent reloads - only reload at most once every 8 seconds (increased from 5)
     const now = Date.now()
-    if (!force && now - lastReloadTimeRef.current < 5000) {
-      return // Skip reload if less than 5 seconds since last reload
+    if (!force && now - lastReloadTimeRef.current < 8000) {
+      return // Skip reload if less than 8 seconds since last reload
     }
     
     // Clear existing timeout
@@ -84,7 +85,8 @@ const Messages: React.FC = () => {
       clearTimeout(reloadConversationsTimeoutRef.current)
     }
     
-    // Debounce: only reload after 3 seconds of no new messages (increased from 1 second)
+    // Debounce: only reload after 5 seconds of no new messages (increased from 3 seconds)
+    // Reduced frequency for better performance when testing with 2-3 users
     reloadConversationsTimeoutRef.current = setTimeout(async () => {
       try {
         lastReloadTimeRef.current = Date.now()
@@ -105,7 +107,7 @@ const Messages: React.FC = () => {
           console.error('Failed to reload conversations:', error)
         }
       }
-    }, force ? 0 : 3000) // Wait 3 seconds before reloading (increased from 1 second)
+    }, force ? 0 : 5000) // Wait 5 seconds before reloading (increased from 3 seconds)
   }, [])
 
   // Long Polling Hook
@@ -261,9 +263,9 @@ const Messages: React.FC = () => {
       loadConversations(isFirstLoadRef.current)
       isFirstLoadRef.current = false
       
-      // Refresh conversations every 60 seconds (increased from 30 to reduce reloads)
-      // Don't show loading on refresh
-      const interval = setInterval(() => loadConversations(false), 60000)
+      // Refresh conversations every 90 seconds (increased from 60 to reduce reloads)
+      // Don't show loading on refresh - optimized for 2-3 users testing
+      const interval = setInterval(() => loadConversations(false), 90000)
       return () => clearInterval(interval)
     } else {
       // If no currentUser yet, set loading to false to show the page
@@ -390,13 +392,13 @@ const Messages: React.FC = () => {
     }
     
     // Set up interval for periodic refresh (only if we have currentUser)
-    // Increased to 60 seconds to reduce load
+    // Increased to 90 seconds to reduce load - optimized for 2-3 users testing
     if (currentUser) {
       activeUsersIntervalRef.current = setInterval(() => {
         if (!isLoadingActiveUsersRef.current) {
           loadActiveUsers()
         }
-      }, 60000) // Refresh every 60 seconds
+      }, 90000) // Refresh every 90 seconds (increased from 60)
     }
     
     return () => {

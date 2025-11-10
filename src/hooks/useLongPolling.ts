@@ -38,6 +38,15 @@ export function useLongPolling({
   const abortControllerRef = useRef<AbortController | null>(null);
   const isPollingRef = useRef(false);
   const isLoadingHistoryRef = useRef(false);
+  // Use refs for callbacks to prevent infinite loops
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+  
+  // Update refs when callbacks change
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+    onErrorRef.current = onError;
+  }, [onMessage, onError]);
 
   const poll = useCallback(async () => {
     if (!enabled || !conversationId || isPollingRef.current) {
@@ -117,7 +126,7 @@ export function useLongPolling({
 
           // Call onMessage callback for each new message (silently)
           newMessages.forEach((msg: Message) => {
-            onMessage?.(msg);
+            onMessageRef.current?.(msg);
           });
 
           // Merge and sort all messages
@@ -130,13 +139,13 @@ export function useLongPolling({
       // Continue polling after receiving response
       isPollingRef.current = false;
       
-      // Poll again after a longer delay (2-3 seconds) to avoid UI flickering
-      // This reduces the frequency of status changes
+      // Poll again after a longer delay (3-5 seconds) to reduce load and avoid lag
+      // Increased delay for better performance when testing with 2-3 users
       setTimeout(() => {
         if (enabled && conversationId) {
           poll();
         }
-      }, 2000); // Increased from 50ms to 2000ms (2 seconds)
+      }, 3000); // Increased from 2000ms to 3000ms (3 seconds) for better performance
 
     } catch (error: any) {
       isPollingRef.current = false;
@@ -148,16 +157,16 @@ export function useLongPolling({
 
       // Only show error state after multiple failures
       console.error('[useLongPolling] Polling error:', error);
-      onError?.(error);
+      onErrorRef.current?.(error);
 
-      // Wait longer before retrying on error (5 seconds)
+      // Wait longer before retrying on error (8 seconds) to reduce load
       setTimeout(() => {
         if (enabled && conversationId && !abortControllerRef.current?.signal.aborted) {
           poll();
         }
-      }, 5000);
+      }, 8000); // Increased from 5000ms to 8000ms (8 seconds) for better performance
     }
-  }, [conversationId, enabled, onMessage, onError, isConnected]);
+  }, [conversationId, enabled]); // Removed onMessage, onError, isConnected to prevent infinite loops
 
   // Load message history
   const loadHistory = useCallback(async () => {
@@ -353,6 +362,16 @@ export function useLongPolling({
     }
   }, [conversationId]);
 
+  // Use refs for poll and loadHistory to prevent infinite loops
+  const pollRef = useRef(poll);
+  const loadHistoryRef = useRef(loadHistory);
+  
+  // Update refs when functions change
+  useEffect(() => {
+    pollRef.current = poll;
+    loadHistoryRef.current = loadHistory;
+  }, [poll, loadHistory]);
+
   // Start polling when conversationId changes or enabled changes
   useEffect(() => {
     // Use a ref to track the current conversation to prevent duplicate calls
@@ -366,7 +385,7 @@ export function useLongPolling({
       setIsConnected(false); // Reset connection status when conversation changes
       
       // Load history first, then start polling
-      loadHistory().then(() => {
+      loadHistoryRef.current().then(() => {
         // Only proceed if component is still mounted and conversation hasn't changed
         if (isMounted && currentConversationId === conversationId) {
           // Set connected after history is loaded
@@ -375,7 +394,7 @@ export function useLongPolling({
           setTimeout(() => {
             // Double check component is still mounted and conversation hasn't changed
             if (isMounted && currentConversationId === conversationId) {
-              poll();
+              pollRef.current();
             }
           }, 500);
         }
@@ -389,7 +408,7 @@ export function useLongPolling({
           setIsConnected(true);
           setTimeout(() => {
             if (isMounted && currentConversationId === conversationId) {
-              poll();
+              pollRef.current();
             }
           }, 500);
         }
@@ -414,7 +433,7 @@ export function useLongPolling({
       }
       isPollingRef.current = false;
     };
-  }, [enabled, conversationId, poll, loadHistory]);
+  }, [enabled, conversationId]); // Removed poll and loadHistory from dependencies to prevent infinite loops
 
   return {
     messages,
