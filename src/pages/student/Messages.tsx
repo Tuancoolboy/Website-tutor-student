@@ -548,9 +548,12 @@ const Messages: React.FC = () => {
   // Only format conversations if we have currentUser
   // Memoize formatted conversations to avoid re-computing on every render
   // Format conversation inline to avoid useCallback dependency issues
+  // Use Object.keys(users).length as dependency instead of users object to avoid reference issues
+  const usersKeysLength = Object.keys(users).length
+  const currentUserId = currentUser?.userId || currentUser?.id || ''
+  
   const formattedConversations = useMemo(() => {
     if (!currentUser) return []
-    const currentUserId = currentUser?.userId || currentUser?.id || ''
     
     return conversations.map((conversation: any) => {
       const otherId = conversation.participants?.find((id: string) => id !== currentUserId)
@@ -577,7 +580,7 @@ const Messages: React.FC = () => {
         otherId
       }
     })
-  }, [conversations, currentUser, users])
+  }, [conversations, currentUserId, usersKeysLength, currentUser])
   
   // Memoize filtered conversations to avoid re-filtering on every render
   const filteredConversations = useMemo(() => {
@@ -593,7 +596,6 @@ const Messages: React.FC = () => {
   const selectedConversation = useMemo(() => {
     return formattedConversations.find(c => c.id === selectedConversationId)
   }, [formattedConversations, selectedConversationId])
-  const currentUserId = currentUser?.userId || currentUser?.id || ''
 
   // Load available users (all users: students, tutors, management)
   const loadAvailableUsers = async () => {
