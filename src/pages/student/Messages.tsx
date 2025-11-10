@@ -534,22 +534,15 @@ const Messages: React.FC = () => {
     return colors[index]
   }
 
-  // Get other participant in conversation
-  const getOtherParticipant = (conversation: any) => {
+  // Format conversation for display - memoized with useCallback
+  const formatConversation = useCallback((conversation: any) => {
     const currentUserId = currentUser?.userId || currentUser?.id || ''
     const otherId = conversation.participants?.find((id: string) => id !== currentUserId)
-    return otherId ? users[otherId] : null
-  }
-
-  // Format conversation for display
-  const formatConversation = (conversation: any) => {
-    const otherUser = getOtherParticipant(conversation)
+    const otherUser = otherId ? users[otherId] : null
     const lastMessage = conversation.lastMessage
-    const currentUserId = currentUser?.userId || currentUser?.id || ''
     const unreadCount = conversation.unreadCount?.[currentUserId] || 0
     
     // Get other participant ID even if user info not loaded yet
-    const otherId = conversation.participants?.find((id: string) => id !== currentUserId)
     const displayName = otherUser?.name || otherUser?.email || `User ${otherId?.slice(0, 8) || 'Unknown'}`
     
     return {
@@ -567,7 +560,7 @@ const Messages: React.FC = () => {
       otherUser,
       otherId
     }
-  }
+  }, [currentUser, users])
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon />, path: '/student' },
@@ -585,7 +578,7 @@ const Messages: React.FC = () => {
   const formattedConversations = useMemo(() => {
     if (!currentUser) return []
     return conversations.map(formatConversation)
-  }, [conversations, currentUser, users])
+  }, [conversations, currentUser, formatConversation])
   
   // Memoize filtered conversations to avoid re-filtering on every render
   const filteredConversations = useMemo(() => {
