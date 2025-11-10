@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from '../../contexts/ThemeContext'
 import { useNavigate } from 'react-router-dom'
 import Button from '../../components/ui/Button'
@@ -70,28 +70,42 @@ const Messages: React.FC = () => {
   // Online Status Hook - Track which users are online via WebSocket
   const { onlineUsers, isUserOnline, isConnected: isWebSocketConnected } = useOnlineStatus({ enabled: true })
 
+  // Debounce reload conversations to avoid too many API calls
+  const reloadConversationsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const reloadConversations = useCallback(async () => {
+    // Clear existing timeout
+    if (reloadConversationsTimeoutRef.current) {
+      clearTimeout(reloadConversationsTimeoutRef.current)
+    }
+    
+    // Debounce: only reload after 1 second of no new messages
+    reloadConversationsTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await conversationsAPI.list()
+        if (response.success && response.data) {
+          const conversationsData = Array.isArray(response.data) ? response.data : []
+          setConversations(conversationsData)
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Failed to reload conversations:', error)
+        }
+      }
+    }, 1000) // Wait 1 second before reloading
+  }, [])
+
   // Long Polling Hook
   const { messages, isPolling, isConnected, sendMessage, loadHistory } = useLongPolling({
     conversationId: selectedConversationId,
     enabled: !!selectedConversationId,
     onMessage: (message) => {
-      console.log('New message received:', message)
-      // Reload conversations to update lastMessage when new message arrives
-      const reloadConversations = async () => {
-        try {
-          const response = await conversationsAPI.list()
-          if (response.success && response.data) {
-            const conversationsData = Array.isArray(response.data) ? response.data : []
-            setConversations(conversationsData)
-          }
-        } catch (error) {
-          console.error('Failed to reload conversations:', error)
-        }
-      }
+      // Debounced reload - will only reload after 1 second of no new messages
       reloadConversations()
     },
     onError: (error) => {
-      console.error('Polling error:', error)
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Polling error:', error)
+      }
     }
   })
 

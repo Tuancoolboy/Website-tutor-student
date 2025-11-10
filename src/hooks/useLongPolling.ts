@@ -162,13 +162,15 @@ export function useLongPolling({
   // Load message history
   const loadHistory = useCallback(async () => {
     if (!conversationId) {
-      console.log('[useLongPolling] loadHistory: No conversationId');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[useLongPolling] loadHistory: No conversationId');
+      }
       return;
     }
 
     // Prevent multiple simultaneous calls
     if (isLoadingHistoryRef.current) {
-      console.log('[useLongPolling] loadHistory: Already loading, skipping');
+      // Silently skip if already loading - don't spam console
       return;
     }
 
@@ -180,7 +182,9 @@ export function useLongPolling({
         throw new Error('No authentication token');
       }
 
-      console.log('[useLongPolling] loadHistory: Loading messages for conversation:', conversationId);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[useLongPolling] loadHistory: Loading messages for conversation:', conversationId);
+      }
 
       // Build URL correctly
       const baseUrl = API_BASE_URL.startsWith('http') 
@@ -201,11 +205,9 @@ export function useLongPolling({
       }
 
       const data = await response.json();
-      console.log('[useLongPolling] loadHistory: Response:', data);
       
       if (data.success && data.data) {
         const messagesData = Array.isArray(data.data) ? data.data : [];
-        console.log('[useLongPolling] loadHistory: Found', messagesData.length, 'messages');
         
         if (messagesData.length > 0) {
           // Remove duplicates by id (in case API returns duplicates)
@@ -221,20 +223,19 @@ export function useLongPolling({
             new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
           
-          console.log('[useLongPolling] loadHistory: Setting', uniqueMessages.length, 'unique messages to state');
           // Clear and set messages directly (replace, not merge)
           setMessages(uniqueMessages);
           const lastMessage = uniqueMessages[uniqueMessages.length - 1];
           lastMessageIdRef.current = lastMessage.id;
-          console.log('[useLongPolling] loadHistory: Set lastMessageId to:', lastMessage.id);
         } else {
           // No messages yet, clear the list
-          console.log('[useLongPolling] loadHistory: No messages found, clearing state');
           setMessages([]);
           lastMessageIdRef.current = null;
         }
       } else {
-        console.warn('[useLongPolling] Invalid response format:', data);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[useLongPolling] Invalid response format:', data);
+        }
         setMessages([]);
       }
     } catch (error: any) {
@@ -264,13 +265,15 @@ export function useLongPolling({
         : `${window.location.origin}${API_BASE_URL}`;
       const url = `${baseUrl}/conversations/${conversationId}/messages`;
 
-      console.log('[useLongPolling] Sending message:', {
-        url,
-        conversationId,
-        content: content.substring(0, 50) + '...',
-        baseUrl,
-        API_BASE_URL
-      });
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[useLongPolling] Sending message:', {
+          url,
+          conversationId,
+          content: content.substring(0, 50) + '...',
+          baseUrl,
+          API_BASE_URL
+        });
+      }
 
       let response: Response;
       try {
@@ -295,48 +298,47 @@ export function useLongPolling({
         throw fetchError;
       }
 
-      console.log('[useLongPolling] Response status:', response.status, response.statusText);
-
       if (!response.ok) {
         let errorMessage = `Failed to send message: ${response.status} ${response.statusText}`;
         try {
           const errorData = await response.json();
           errorMessage = errorData.error || errorData.message || errorMessage;
-          console.error('[useLongPolling] Error response:', errorData);
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[useLongPolling] Error response:', errorData);
+          }
         } catch (e) {
           // Response is not JSON, get text
           const errorText = await response.text();
-          console.error('[useLongPolling] Error response text:', errorText);
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[useLongPolling] Error response text:', errorText);
+          }
           errorMessage = errorText || errorMessage;
         }
         throw new Error(errorMessage);
       }
 
       const data = await response.json();
-      console.log('[useLongPolling] Send message response:', data);
       
       // Message will appear automatically via polling
       // But we can add it immediately for better UX
       if (data.success && data.data) {
         const newMsg = data.data;
-        console.log('[useLongPolling] Adding message to state:', newMsg);
         setMessages(prev => {
-          console.log('[useLongPolling] Previous messages count:', prev.length);
           // Check if message already exists
           if (prev.some(m => m.id === newMsg.id)) {
-            console.log('[useLongPolling] Message already exists, skipping');
             return prev;
           }
           // Add new message and sort by createdAt
           const updated = [...prev, newMsg];
           updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-          console.log('[useLongPolling] Updated messages count:', updated.length);
           return updated;
         });
         // Update lastMessageIdRef for polling
         lastMessageIdRef.current = newMsg.id;
       } else {
-        console.warn('[useLongPolling] Invalid send response format:', data);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[useLongPolling] Invalid send response format:', data);
+        }
       }
 
       return data;
@@ -355,9 +357,9 @@ export function useLongPolling({
   useEffect(() => {
     // Use a ref to track the current conversation to prevent duplicate calls
     const currentConversationId = conversationId;
+    let isMounted = true;
     
     if (enabled && conversationId) {
-      console.log('[useLongPolling] Conversation changed, loading history:', conversationId);
       // Reset state when conversation changes
       lastMessageIdRef.current = null;
       // Don't clear messages immediately - let loadHistory handle it
@@ -365,36 +367,34 @@ export function useLongPolling({
       
       // Load history first, then start polling
       loadHistory().then(() => {
-        // Only proceed if conversation hasn't changed during loading
-        if (currentConversationId === conversationId) {
-          console.log('[useLongPolling] History loaded, starting poll');
+        // Only proceed if component is still mounted and conversation hasn't changed
+        if (isMounted && currentConversationId === conversationId) {
           // Set connected after history is loaded
           setIsConnected(true);
           // Start polling after history is loaded with a small delay
           setTimeout(() => {
-            // Double check conversation hasn't changed
-            if (currentConversationId === conversationId) {
+            // Double check component is still mounted and conversation hasn't changed
+            if (isMounted && currentConversationId === conversationId) {
               poll();
             }
           }, 500);
-        } else {
-          console.log('[useLongPolling] Conversation changed during load, skipping poll');
         }
       }).catch((error) => {
-        // Only proceed if conversation hasn't changed during loading
-        if (currentConversationId === conversationId) {
-          console.error('[useLongPolling] Failed to load history:', error);
+        // Only proceed if component is still mounted and conversation hasn't changed
+        if (isMounted && currentConversationId === conversationId) {
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[useLongPolling] Failed to load history:', error);
+          }
           // Start polling anyway
           setIsConnected(true);
           setTimeout(() => {
-            if (currentConversationId === conversationId) {
+            if (isMounted && currentConversationId === conversationId) {
               poll();
             }
           }, 500);
         }
       });
     } else {
-      console.log('[useLongPolling] Conversation disabled or cleared');
       // Stop polling
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -406,16 +406,13 @@ export function useLongPolling({
       isLoadingHistoryRef.current = false;
     }
 
-    // Cleanup: abort ongoing request only if conversation changed
+    // Cleanup: abort ongoing request when component unmounts or conversation changes
     return () => {
-      // Only abort if conversation actually changed
-      if (currentConversationId !== conversationId) {
-        console.log('[useLongPolling] Cleanup: Conversation changed, aborting');
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-        }
-        isPollingRef.current = false;
+      isMounted = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
+      isPollingRef.current = false;
     };
   }, [enabled, conversationId, poll, loadHistory]);
 
