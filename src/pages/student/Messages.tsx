@@ -486,22 +486,6 @@ const Messages: React.FC = () => {
     }
   }, [selectedConversationId]) // ONLY depend on conversationId to avoid re-renders
 
-  const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen)
-  }
-
-  const handleMenuClick = (item: any) => {
-    setActiveMenu(item.id)
-    if (item.path) {
-      navigate(item.path)
-    }
-  }
-
-  const handleThemeToggle = () => {
-    toggleTheme()
-    setShowThemeOptions(false)
-  }
-
   // Helper function to get initials from name
   const getInitials = (name: string | undefined | null) => {
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -545,6 +529,7 @@ const Messages: React.FC = () => {
     { id: 'messages', label: 'Messages', icon: <ChatIcon />, path: '/student/messages' }
   ]
 
+  // IMPORTANT: All hooks must be called BEFORE any conditional returns
   // Only format conversations if we have currentUser
   // Memoize formatted conversations to avoid re-computing on every render
   // Format conversation inline to avoid useCallback dependency issues
@@ -597,6 +582,36 @@ const Messages: React.FC = () => {
     return formattedConversations.find(c => c.id === selectedConversationId)
   }, [formattedConversations, selectedConversationId])
 
+  // Show loading screen while checking authentication or if no currentUser (AFTER all hooks)
+  if (isCheckingAuth || !currentUser) {
+    return (
+      <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'} flex items-center justify-center`}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className={`text-base ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+            {isCheckingAuth ? 'Checking authentication...' : 'Loading data...'}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const handleDrawerToggle = () => {
+    setMobileOpen(!mobileOpen)
+  }
+
+  const handleMenuClick = (item: any) => {
+    setActiveMenu(item.id)
+    if (item.path) {
+      navigate(item.path)
+    }
+  }
+
+  const handleThemeToggle = () => {
+    toggleTheme()
+    setShowThemeOptions(false)
+  }
+
   // Load available users (all users: students, tutors, management)
   const loadAvailableUsers = async () => {
     try {
@@ -626,16 +641,15 @@ const Messages: React.FC = () => {
       }
       
       if (usersList.length > 0) {
-          const currentUserId = currentUser?.userId || currentUser?.id || ''
         // Chỉ filter ra current user - hiển thị tất cả users khác (kể cả đã có conversation)
         const filteredUsers = usersList.filter((user: any) => 
           user && user.id && user.id !== currentUserId
-          )
-          setAvailableUsers(filteredUsers)
+        )
+        setAvailableUsers(filteredUsers)
       } else {
         console.warn('[Student Messages] No users found in response. Response structure:', Object.keys(response || {}))
         setAvailableUsers([])
-        }
+      }
     } catch (error) {
       console.error('[Student Messages] Failed to load available users:', error)
       setAvailableUsers([])
@@ -715,7 +729,7 @@ const Messages: React.FC = () => {
   const handleOpenNewConversation = () => {
     setShowNewConversationModal(true)
     // Always reload users to ensure latest data
-      loadAvailableUsers()
+    loadAvailableUsers()
   }
 
   // Delete conversation (hide for current user only)
@@ -795,20 +809,6 @@ const Messages: React.FC = () => {
       e.preventDefault()
       handleSendMessage()
     }
-  }
-
-  // Show loading screen while checking authentication or if no currentUser
-  if (isCheckingAuth || !currentUser) {
-    return (
-      <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'} flex items-center justify-center`}>
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className={`text-base ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-            {isCheckingAuth ? 'Checking authentication...' : 'Loading data...'}
-          </p>
-        </div>
-      </div>
-    )
   }
 
   return (

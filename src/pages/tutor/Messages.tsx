@@ -484,36 +484,6 @@ const Messages: React.FC = () => {
     }
   }, [selectedConversationId]) // ONLY depend on conversationId to avoid re-renders
 
-  // Show loading screen while checking authentication
-  if (isCheckingAuth || !currentUser) {
-    return (
-      <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'} flex items-center justify-center`}>
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className={`text-base ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-            {isCheckingAuth ? 'Đang kiểm tra đăng nhập...' : 'Đang tải dữ liệu...'}
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen)
-  }
-
-  const handleMenuClick = (item: any) => {
-    setActiveMenu(item.id)
-    if (item.path) {
-      navigate(item.path)
-    }
-  }
-
-  const handleThemeToggle = () => {
-    toggleTheme()
-    setShowThemeOptions(false)
-  }
-
   // Helper function to get initials from name
   const getInitials = (name: string | undefined | null) => {
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -545,7 +515,6 @@ const Messages: React.FC = () => {
     return colors[index]
   }
 
-
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon />, path: '/tutor' },
     { id: 'availability', label: 'Set Availability', icon: <ScheduleIcon />, path: '/tutor/availability' },
@@ -555,6 +524,7 @@ const Messages: React.FC = () => {
     { id: 'messages', label: 'Messages', icon: <ChatIcon />, path: '/tutor/messages' }
   ]
 
+  // IMPORTANT: All hooks must be called BEFORE any conditional returns
   // Memoize formatted conversations to avoid re-computing on every render
   // Format conversation inline to avoid useCallback dependency issues
   // Use Object.keys(users).length as dependency instead of users object to avoid reference issues
@@ -605,6 +575,36 @@ const Messages: React.FC = () => {
   const selectedConversation = useMemo(() => {
     return formattedConversations.find(c => c.id === selectedConversationId)
   }, [formattedConversations, selectedConversationId])
+
+  // Show loading screen while checking authentication (AFTER all hooks)
+  if (isCheckingAuth || !currentUser) {
+    return (
+      <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'} flex items-center justify-center`}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className={`text-base ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+            {isCheckingAuth ? 'Đang kiểm tra đăng nhập...' : 'Đang tải dữ liệu...'}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const handleDrawerToggle = () => {
+    setMobileOpen(!mobileOpen)
+  }
+
+  const handleMenuClick = (item: any) => {
+    setActiveMenu(item.id)
+    if (item.path) {
+      navigate(item.path)
+    }
+  }
+
+  const handleThemeToggle = () => {
+    toggleTheme()
+    setShowThemeOptions(false)
+  }
 
   // Load available users (all users: students, tutors, management)
   const loadAvailableUsers = async () => {
