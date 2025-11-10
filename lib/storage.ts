@@ -377,14 +377,24 @@ export class JSONStorage {
       }
       
       // Fetch blob using cached URL (this doesn't count as Advanced Operation)
+      // Try without token first (if blob is public), then with token if needed
       let response: Response;
       try {
-        const token = process.env.BLOB_READ_WRITE_TOKEN;
-        response = await fetch(blobUrl, {
-          headers: token ? {
-            'Authorization': `Bearer ${token}`
-          } : {}
-        });
+        // First try: Fetch without token (for public blobs)
+        response = await fetch(blobUrl);
+        
+        // If 403, try with token
+        if (response.status === 403) {
+          const token = process.env.BLOB_READ_WRITE_TOKEN;
+          if (token) {
+            console.log(`[Blob Storage] Got 403, retrying with token...`);
+            response = await fetch(blobUrl, {
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+          }
+        }
       } catch (fetchError: any) {
         // URL might be stale, clear cache and retry once
         console.warn(`[Blob Storage] Failed to fetch from cached URL, clearing cache for ${blobPath}`);
@@ -395,17 +405,107 @@ export class JSONStorage {
       
       // Check if response is OK
       if (!response.ok) {
-        // If 404, clear cache and throw error
-        if (response.status === 404) {
+        const errorStatus = response.status;
+        const errorText = await response.text().catch(() => 'Unknown error');
+        
+        // If 403 or 404, clear cache and retry once with fresh list()
+        if (errorStatus === 403 || errorStatus === 404) {
+          console.warn(`[Blob Storage] Got ${errorStatus} from cached URL for ${blobPath}, clearing cache and retrying...`);
           this.blobUrlCache.delete(blobPath);
           this.blobUrlCache.delete(filename);
+          
+          // Retry: Get fresh URL using list() and fetch again
+          try {
+            console.log(`[Blob Storage] Retrying with fresh list() for ${blobPath}...`);
+            const retryResult = await list({ prefix: blobPath });
+            const retryBlob = retryResult.blobs.find(blob => blob.pathname === blobPath);
+            
+            if (retryBlob) {
+              const freshUrl = retryBlob.url;
+              this.blobUrlCache.set(blobPath, freshUrl);
+              console.log(`[Blob Storage] Got fresh URL, retrying fetch...`);
+              
+              // Retry fetch with fresh URL (try without token first, then with token)
+              let retryResponse = await fetch(freshUrl);
+              
+              // If 403, try with token
+              if (retryResponse.status === 403) {
+                const token = process.env.BLOB_READ_WRITE_TOKEN;
+                if (token) {
+                  console.log(`[Blob Storage] Retry got 403, trying with token...`);
+                  retryResponse = await fetch(freshUrl, {
+                    headers: {
+                      'Authorization': `Bearer ${token}`
+                    }
+                  });
+                }
+              }
+              
+              if (!retryResponse.ok) {
+                const retryErrorText = await retryResponse.text().catch(() => 'Unknown error');
+                console.error(`[Blob Storage] Retry failed: ${retryResponse.status} ${retryResponse.statusText}`, retryErrorText.substring(0, 200));
+                if (retryResponse.status === 403) {
+                  throw new Error(`403 Forbidden: Blob may not be public or token is invalid. Please verify: 1) Blob was uploaded with access: 'public', 2) BLOB_READ_WRITE_TOKEN is correct in Vercel environment variables.`);
+                }
+                throw new Error(`Failed to fetch blob after retry: ${retryResponse.status} ${retryResponse.statusText}. ${retryErrorText.substring(0, 100)}`);
+              }
+              
+              // Success - use retry response
+              response = retryResponse;
+            } else {
+              // Not found at data/, try root level
+              console.log(`[Blob Storage] Not found at ${blobPath}, trying root level...`);
+              const rootResult = await list({ prefix: filename });
+              const rootBlob = rootResult.blobs.find(blob => blob.pathname === filename);
+              
+              if (rootBlob) {
+                const rootUrl = rootBlob.url;
+                this.blobUrlCache.set(filename, rootUrl);
+                
+                // Try without token first (public blob), then with token if needed
+                let rootResponse = await fetch(rootUrl);
+                
+                // If 403, try with token
+                if (rootResponse.status === 403) {
+                  const token = process.env.BLOB_READ_WRITE_TOKEN;
+                  if (token) {
+                    console.log(`[Blob Storage] Root level got 403, trying with token...`);
+                    rootResponse = await fetch(rootUrl, {
+                      headers: {
+                        'Authorization': `Bearer ${token}`
+                      }
+                    });
+                  }
+                }
+                
+                if (!rootResponse.ok) {
+                  const rootErrorText = await rootResponse.text().catch(() => 'Unknown error');
+                  console.error(`[Blob Storage] Root level fetch failed: ${rootResponse.status} ${rootResponse.statusText}`, rootErrorText.substring(0, 200));
+                  if (rootResponse.status === 403) {
+                    throw new Error(`403 Forbidden: Blob may not be public or token is invalid. Please verify: 1) Blob was uploaded with access: 'public', 2) BLOB_READ_WRITE_TOKEN is correct in Vercel environment variables.`);
+                  }
+                  throw new Error(`Failed to fetch blob at root level: ${rootResponse.status} ${rootResponse.statusText}. ${rootErrorText.substring(0, 100)}`);
+                }
+                
+                // Success - use root response
+                response = rootResponse;
+              } else {
+                throw new Error(`No blob found for ${filename} at ${blobPath} or root level. Please upload the file to Blob Storage.`);
+              }
+            }
+          } catch (retryError: any) {
+            console.error(`[Blob Storage] Retry failed:`, retryError.message);
+            // If it's still a 403, provide helpful message
+            if (retryError.message.includes('403')) {
+              throw new Error(`403 Forbidden: Blob may not be public or token is invalid. Please verify: 1) Blob was uploaded with access: 'public', 2) BLOB_READ_WRITE_TOKEN is correct in Vercel environment variables, 3) Token has proper permissions. Original error: ${errorText.substring(0, 100)}`);
+            }
+            throw retryError;
+          }
+        } else {
+          // Other errors (500, etc.)
+          console.error(`[Blob Storage] Failed to fetch blob: ${errorStatus}`, errorText.substring(0, 200));
+          throw new Error(`Failed to fetch blob: ${errorStatus}. ${errorText.substring(0, 100)}`);
         }
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`[Blob Storage] Failed to fetch blob: ${response.status} ${response.statusText}`, errorText.substring(0, 200));
-        if (response.status === 403) {
-          throw new Error(`403 Forbidden: Blob may not be public or token is invalid. Please verify blob was uploaded with access: 'public' or check BLOB_READ_WRITE_TOKEN.`);
-        }
-        throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}. ${errorText.substring(0, 100)}`);
       }
       
       const content = await response.text();
