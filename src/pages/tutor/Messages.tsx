@@ -357,10 +357,51 @@ const Messages: React.FC = () => {
   // Note: loadHistory is automatically called by useLongPolling hook when conversationId changes
   // No need to call it manually here to avoid duplicate calls
 
-  // Track conversation changes (no auto-scroll)
+  // Scroll to bottom ONLY ONCE when opening a conversation (first time)
+  // After that, let user scroll manually
   useEffect(() => {
-    previousConversationIdRef.current = selectedConversationId
-  }, [selectedConversationId])
+    // Check if conversation actually changed
+    const conversationChanged = previousConversationIdRef.current !== selectedConversationId
+    
+    if (conversationChanged && selectedConversationId && messages.length > 0) {
+      // Update ref to track current conversation
+      previousConversationIdRef.current = selectedConversationId
+      
+      // Scroll to bottom ONCE when opening conversation
+      // Use setTimeout to ensure DOM is updated and messages are rendered
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          const container = messagesContainerRef.current
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: 'auto' // Use 'auto' for instant scroll
+          })
+        }
+      }, 200) // Delay to ensure messages are fully rendered
+    } else if (conversationChanged) {
+      // Conversation changed but no messages yet - update ref and wait for messages
+      previousConversationIdRef.current = selectedConversationId
+      
+      // Wait for messages to load, then scroll once
+      const checkAndScroll = setInterval(() => {
+        if (messagesContainerRef.current && messages.length > 0) {
+          clearInterval(checkAndScroll)
+          setTimeout(() => {
+            if (messagesContainerRef.current) {
+              const container = messagesContainerRef.current
+              container.scrollTo({
+                top: container.scrollHeight,
+                behavior: 'auto'
+              })
+            }
+          }, 100)
+        }
+      }, 100)
+      
+      // Clear interval after 5 seconds to avoid infinite loop
+      setTimeout(() => clearInterval(checkAndScroll), 5000)
+    }
+  }, [selectedConversationId, messages.length]) // Depend on conversationId and messages count
 
   // Show loading screen while checking authentication
   if (isCheckingAuth || !currentUser) {

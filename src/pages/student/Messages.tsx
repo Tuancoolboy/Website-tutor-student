@@ -59,8 +59,6 @@ const Messages: React.FC = () => {
   const [showConversationMenu, setShowConversationMenu] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const shouldAutoScrollRef = useRef(true)
-  const isUserScrollingRef = useRef(false)
   const previousConversationIdRef = useRef<string | null>(null)
   const isLoadingActiveUsersRef = useRef(false)
   const activeUsersIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -359,85 +357,51 @@ const Messages: React.FC = () => {
   // Note: loadHistory is automatically called by useLongPolling hook when conversationId changes
   // No need to call it manually here to avoid duplicate calls
 
-  // Check if user is near bottom of scroll container
-  const isNearBottom = (container: HTMLDivElement, threshold: number = 100) => {
-    const { scrollTop, scrollHeight, clientHeight } = container
-    return scrollHeight - scrollTop - clientHeight < threshold
-  }
-
-  // Handle scroll event to detect user scrolling
+  // Scroll to bottom ONLY ONCE when opening a conversation (first time)
+  // After that, let user scroll manually
   useEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
-
-    const handleScroll = () => {
-      if (container) {
-        // If user scrolls up, disable auto-scroll temporarily
-        if (!isNearBottom(container, 150)) {
-          shouldAutoScrollRef.current = false
-          isUserScrollingRef.current = true
-        } else {
-          // If user scrolls back to bottom, re-enable auto-scroll
-          shouldAutoScrollRef.current = true
-          isUserScrollingRef.current = false
-        }
-      }
-    }
-
-    container.addEventListener('scroll', handleScroll)
-    return () => {
-      container.removeEventListener('scroll', handleScroll)
-    }
-  }, [selectedConversationId])
-
-  // Auto-scroll to bottom only when:
-  // 1. Conversation changes (new conversation selected)
-  // 2. New message arrives AND user is near bottom
-  useEffect(() => {
-    if (messagesContainerRef.current && messages.length > 0) {
-      // Check if conversation actually changed
-      const conversationChanged = previousConversationIdRef.current !== selectedConversationId
+    // Check if conversation actually changed
+    const conversationChanged = previousConversationIdRef.current !== selectedConversationId
+    
+    if (conversationChanged && selectedConversationId && messages.length > 0) {
+      // Update ref to track current conversation
+      previousConversationIdRef.current = selectedConversationId
       
-      if (conversationChanged) {
-        // Conversation changed - always scroll to bottom
-        previousConversationIdRef.current = selectedConversationId
-        requestAnimationFrame(() => {
-          if (messagesContainerRef.current) {
-            const container = messagesContainerRef.current
-            container.scrollTo({
-              top: container.scrollHeight,
-              behavior: 'auto'
-            })
-            shouldAutoScrollRef.current = true
-            isUserScrollingRef.current = false
-          }
-        })
-      } else {
-        // Same conversation - only scroll if user is near bottom
-        const container = messagesContainerRef.current
-        if (shouldAutoScrollRef.current || isNearBottom(container, 200)) {
-          requestAnimationFrame(() => {
-            if (messagesContainerRef.current && shouldAutoScrollRef.current) {
+      // Scroll to bottom ONCE when opening conversation
+      // Use setTimeout to ensure DOM is updated and messages are rendered
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          const container = messagesContainerRef.current
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: 'auto' // Use 'auto' for instant scroll
+          })
+        }
+      }, 200) // Delay to ensure messages are fully rendered
+    } else if (conversationChanged) {
+      // Conversation changed but no messages yet - update ref and wait for messages
+      previousConversationIdRef.current = selectedConversationId
+      
+      // Wait for messages to load, then scroll once
+      const checkAndScroll = setInterval(() => {
+        if (messagesContainerRef.current && messages.length > 0) {
+          clearInterval(checkAndScroll)
+          setTimeout(() => {
+            if (messagesContainerRef.current) {
               const container = messagesContainerRef.current
               container.scrollTo({
                 top: container.scrollHeight,
-                behavior: 'smooth'
+                behavior: 'auto'
               })
             }
-          })
+          }, 100)
         }
-      }
+      }, 100)
+      
+      // Clear interval after 5 seconds to avoid infinite loop
+      setTimeout(() => clearInterval(checkAndScroll), 5000)
     }
-  }, [messages, selectedConversationId])
-
-  // Reset scroll behavior when conversation changes
-  useEffect(() => {
-    if (previousConversationIdRef.current !== selectedConversationId) {
-      shouldAutoScrollRef.current = true
-      isUserScrollingRef.current = false
-      previousConversationIdRef.current = selectedConversationId
-    }
-  }, [selectedConversationId])
+  }, [selectedConversationId, messages.length]) // Depend on conversationId and messages count
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen)
@@ -721,36 +685,10 @@ const Messages: React.FC = () => {
       
       await sendMessage(messageContent)
       
-      // Scroll to bottom immediately after sending (user sent message, so always scroll)
-      shouldAutoScrollRef.current = true
-      if (messagesContainerRef.current) {
-        requestAnimationFrame(() => {
-          if (messagesContainerRef.current) {
-            const container = messagesContainerRef.current
-            container.scrollTo({
-              top: container.scrollHeight,
-              behavior: 'smooth'
-            })
-          }
-        })
-      }
-      
       // Force a small delay and then reload history to ensure message appears
       // This is a fallback in case the message wasn't added to state
       setTimeout(async () => {
         await loadHistory()
-        // Scroll again after reload only if user is near bottom
-        if (messagesContainerRef.current && shouldAutoScrollRef.current) {
-          requestAnimationFrame(() => {
-            if (messagesContainerRef.current && shouldAutoScrollRef.current) {
-              const container = messagesContainerRef.current
-              container.scrollTo({
-                top: container.scrollHeight,
-                behavior: 'smooth'
-              })
-            }
-          })
-        }
       }, 500)
       
       // Reload conversations to update lastMessage after sending
