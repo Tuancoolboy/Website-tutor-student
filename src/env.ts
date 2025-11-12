@@ -37,7 +37,7 @@ export const API_BASE_URL =
 export const WEBSOCKET_URL = 
   getEnvVar('VITE_WEBSOCKET_URL') ||
   (isProduction
-    ? 'https://socketio-demo.up.railway.app'  // URL mẫu Railway - thay bằng app của bạn
+    ? 'https://tutor-student-api-production-3968.up.railway.app'  // Railway WebSocket server
     : 'http://localhost:3001'  // Local WebSocket server
   );
 
