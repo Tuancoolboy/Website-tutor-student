@@ -72,6 +72,9 @@ const Messages: React.FC = () => {
   const activeUsersIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const activeUsersTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastOnlineUsersRef = useRef<Set<string>>(new Set())
+  const usersListCacheRef = useRef<any[]>([]) // Cache users list to avoid repeated fetches
+  const usersListCacheTimeRef = useRef<number>(0) // Cache timestamp
+  const USERS_CACHE_DURATION = 10 * 60 * 1000 // Cache users for 10 minutes
 
   // Online Status Hook - Track which users are online via WebSocket
   const { onlineUsers, isUserOnline, isConnected: isWebSocketConnected } = useOnlineStatus({ enabled: true })
@@ -317,7 +320,7 @@ const Messages: React.FC = () => {
       activeUsersIntervalRef.current = null
     }
 
-    const loadActiveUsers = async () => {
+    const loadActiveUsers = async (useCache: boolean = true) => {
       // Prevent multiple simultaneous calls
       if (isLoadingActiveUsersRef.current) {
         if (process.env.NODE_ENV === 'development') {
@@ -335,21 +338,39 @@ const Messages: React.FC = () => {
         isLoadingActiveUsersRef.current = true
         setLoadingActiveUsers(true)
         
-        // Load all users
-        const response = await usersAPI.list({ limit: 100 })
-        
-        // Handle different response formats
+        // Check cache first to avoid unnecessary API calls
         let usersList: any[] = []
-        if (response && Array.isArray(response)) {
-          usersList = response
-        } else if (response.success && response.data) {
-          if (Array.isArray(response.data)) {
-            usersList = response.data
-          } else if (response.data.data && Array.isArray(response.data.data)) {
-            usersList = response.data.data
+        const now = Date.now()
+        const cacheValid = useCache && 
+          usersListCacheRef.current.length > 0 && 
+          (now - usersListCacheTimeRef.current) < USERS_CACHE_DURATION
+        
+        if (cacheValid) {
+          // Use cached users list
+          usersList = usersListCacheRef.current
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[Student Messages] Using cached users list')
           }
-        } else if (response.data && Array.isArray(response.data)) {
-          usersList = response.data
+        } else {
+          // Load all users from API (only when cache is invalid)
+          const response = await usersAPI.list({ limit: 100 })
+          
+          // Handle different response formats
+          if (response && Array.isArray(response)) {
+            usersList = response
+          } else if (response.success && response.data) {
+            if (Array.isArray(response.data)) {
+              usersList = response.data
+            } else if (response.data.data && Array.isArray(response.data.data)) {
+              usersList = response.data.data
+            }
+          } else if (response.data && Array.isArray(response.data)) {
+            usersList = response.data
+          }
+          
+          // Update cache
+          usersListCacheRef.current = usersList
+          usersListCacheTimeRef.current = now
         }
         
         // Filter out current user
@@ -384,7 +405,16 @@ const Messages: React.FC = () => {
           })
           .slice(0, 12) // Show top 12 active users
         
-        setActiveUsers(activeUsersList)
+        // Only update state if active users actually changed
+        setActiveUsers(prevActiveUsers => {
+          const prevIds = new Set(prevActiveUsers.map(u => u.id).sort())
+          const newIds = new Set(activeUsersList.map(u => u.id).sort())
+          if (prevIds.size !== newIds.size || 
+              Array.from(prevIds).some(id => !newIds.has(id))) {
+            return activeUsersList
+          }
+          return prevActiveUsers // Return same reference to prevent re-render
+        })
         
         // Update last known online users
         lastOnlineUsersRef.current = new Set(activeUsersList.map(u => u.id))
@@ -401,34 +431,79 @@ const Messages: React.FC = () => {
       }
     }
     
-    // Check if onlineUsers actually changed
+    // Check if onlineUsers actually changed (chỉ update khi có thay đổi thực sự)
     const currentOnlineUsersSet = new Set(onlineUsers || [])
     const onlineUsersChanged = 
       currentOnlineUsersSet.size !== lastOnlineUsersRef.current.size ||
       Array.from(currentOnlineUsersSet).some(id => !lastOnlineUsersRef.current.has(id)) ||
       Array.from(lastOnlineUsersRef.current).some(id => !currentOnlineUsersSet.has(id))
     
-    // Only load if:
-    // 1. We have currentUser
-    // 2. Online users actually changed (not just a re-render)
-    // 3. Not already loading
-    if (currentUser && (onlineUsersChanged || activeUsers.length === 0)) {
-      // Debounce: wait 1 second before loading to prevent rapid calls
+    // Update last known online users ngay lập tức (không cần đợi API)
+    if (onlineUsersChanged) {
+      lastOnlineUsersRef.current = currentOnlineUsersSet
+      
+      // Nếu đã có activeUsers, chỉ cần update online status (không cần gọi API)
+      if (activeUsers.length > 0 && usersListCacheRef.current.length > 0) {
+        // Update active users list dựa trên onlineUsers hiện tại (không cần gọi API)
+        const updatedActiveUsers = activeUsers.map(user => ({
+          ...user,
+          isActive: isUserOnline(user.id),
+          lastActivity: isUserOnline(user.id) ? new Date().toISOString() : user.lastActivity,
+          lastActivityTime: isUserOnline(user.id) ? Date.now() : user.lastActivityTime
+        })).filter(user => user.isActive) // Chỉ giữ users đang online
+        
+        // Chỉ update state nếu có thay đổi
+        setActiveUsers(prev => {
+          const prevIds = new Set(prev.map(u => u.id).sort())
+          const newIds = new Set(updatedActiveUsers.map(u => u.id).sort())
+          if (prevIds.size !== newIds.size || 
+              Array.from(prevIds).some(id => !newIds.has(id))) {
+            return updatedActiveUsers
+          }
+          return prev // Return same reference to prevent re-render
+        })
+      }
+    }
+    
+    // Chỉ load từ API khi:
+    // 1. Chưa có active users (lần đầu load)
+    // 2. Cache đã hết hạn (sau 10 phút)
+    // 3. Chưa có users list trong cache
+    const now = Date.now()
+    const cacheExpired = (now - usersListCacheTimeRef.current) > USERS_CACHE_DURATION
+    const needsInitialLoad = activeUsers.length === 0 && usersListCacheRef.current.length === 0
+    
+    if (currentUser && (needsInitialLoad || cacheExpired)) {
+      // Clear timeout trước nếu có
+      if (activeUsersTimeoutRef.current) {
+        clearTimeout(activeUsersTimeoutRef.current)
+      }
+      
+      // Debounce: wait 2 seconds before loading to prevent rapid calls
       activeUsersTimeoutRef.current = setTimeout(() => {
         if (!isLoadingActiveUsersRef.current) {
-          loadActiveUsers()
+          // Chỉ gọi API khi cache hết hạn hoặc chưa có data
+          const useCache = !cacheExpired && usersListCacheRef.current.length > 0
+          loadActiveUsers(useCache)
         }
-      }, 1000) // 1 second debounce
+      }, 2000) // 2 seconds debounce
     }
     
     // Set up interval for periodic refresh (only if we have currentUser)
-    // Increased to 90 seconds to reduce load - optimized for 2-3 users testing
+    // Increased to 10 minutes to reduce load - users list doesn't change often
+    // Online status được update real-time qua WebSocket, không cần poll API
     if (currentUser) {
       activeUsersIntervalRef.current = setInterval(() => {
         if (!isLoadingActiveUsersRef.current) {
-          loadActiveUsers()
+          // Chỉ refresh khi cache đã hết hạn
+          const now = Date.now()
+          const cacheExpired = (now - usersListCacheTimeRef.current) > USERS_CACHE_DURATION
+          if (cacheExpired) {
+            // Use cache for periodic refresh (only refresh online status)
+            loadActiveUsers(true) // Use cache - only filter by online status
+          }
         }
-      }, 90000) // Refresh every 90 seconds (increased from 60)
+      }, 600000) // Refresh every 10 minutes (chỉ khi cache hết hạn)
     }
     
     return () => {
