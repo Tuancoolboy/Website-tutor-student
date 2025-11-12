@@ -67,6 +67,7 @@ export function useLongPolling({
   const historyAbortControllerRef = useRef<AbortController | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recentSentMessagesRef = useRef<Set<string>>(new Set()); // Track messages sent trong 30 giây gần đây
 
   const onMessageRef = useRef(onMessage);
   const onErrorRef = useRef(onError);
@@ -106,16 +107,39 @@ export function useLongPolling({
       console.log('[useLongPolling] 📋 Current messages count:', prev.length);
       
       // Kiểm tra xem đã có tin nhắn này chưa (theo ID hoặc content + time)
-      const existingIndex = prev.findIndex(existing => 
-        existing.id === message.id || 
-        (existing.id.startsWith('temp_') && 
-         existing.content === message.content && 
-         Math.abs(new Date(existing.createdAt).getTime() - new Date(message.createdAt).getTime()) < 5000)
-      );
+      // Tăng thời gian match lên 15 giây để đảm bảo match được ngay cả khi server response chậm
+      const existingIndex = prev.findIndex(existing => {
+        // Match theo ID (tin nhắn thật từ server)
+        if (existing.id === message.id) return true;
+        
+        // Match optimistic message với tin nhắn thật (theo content và time)
+        if (existing.id.startsWith('temp_') && existing.content === message.content) {
+          const timeDiff = Math.abs(
+            new Date(existing.createdAt).getTime() - new Date(message.createdAt).getTime()
+          );
+          // Match nếu cùng content và thời gian gần nhau (trong 15 giây)
+          if (timeDiff < 15000) {
+            console.log('[useLongPolling] ✅ Found matching optimistic message:', {
+              optimistic: existing.id,
+              real: message.id,
+              timeDiff: Math.round(timeDiff / 1000) + 's'
+            });
+            return true;
+          }
+        }
+        return false;
+      });
 
       if (existingIndex >= 0) {
         // Thay thế optimistic message bằng tin nhắn thật
-        console.log('[useLongPolling] 🔄 Replacing optimistic message at index:', existingIndex);
+        const optimisticId = prev[existingIndex].id;
+        console.log('[useLongPolling] 🔄 Replacing optimistic message at index:', existingIndex, 'optimisticId:', optimisticId);
+        
+        // Xóa optimistic message khỏi recentSentMessagesRef vì đã được thay thế
+        if (optimisticId.startsWith('temp_')) {
+          recentSentMessagesRef.current.delete(optimisticId);
+        }
+        
         const updated = [...prev];
         updated[existingIndex] = message;
         updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -350,18 +374,38 @@ export function useLongPolling({
         const optimisticMessages = prev.filter(msg => msg.id.startsWith('temp_'));
         
         // Merge optimistic messages với history (loại bỏ duplicates)
+        // Ưu tiên giữ lại optimistic messages gần đây (đặc biệt là những message vừa gửi)
         const allMessages = [...sorted];
         optimisticMessages.forEach(optimistic => {
-          // Chỉ thêm optimistic message nếu chưa có trong history
-          // và nếu nó được tạo trong 5 giây gần đây (để tránh stale optimistic messages)
-          const isRecent = new Date(optimistic.createdAt).getTime() > Date.now() - 5000;
-          const existsInHistory = sorted.some(msg => 
-            msg.id === optimistic.id || 
-            (msg.content === optimistic.content && 
-             Math.abs(new Date(msg.createdAt).getTime() - new Date(optimistic.createdAt).getTime()) < 5000)
-          );
-          if (isRecent && !existsInHistory) {
+          // Kiểm tra xem optimistic message đã có trong history chưa (theo content và time)
+          const existsInHistory = sorted.some(msg => {
+            // Match theo ID (nếu server đã trả về message với temp ID - không có)
+            if (msg.id === optimistic.id) return true;
+            // Match theo content và time (trong vòng 15 giây)
+            if (msg.content === optimistic.content && msg.senderId === optimistic.senderId) {
+              const timeDiff = Math.abs(
+                new Date(msg.createdAt).getTime() - new Date(optimistic.createdAt).getTime()
+              );
+              return timeDiff < 15000; // 15 giây
+            }
+            return false;
+          });
+          
+          // Kiểm tra xem message này có trong recentSentMessages không (vừa gửi)
+          const isRecentlySent = recentSentMessagesRef.current.has(optimistic.id);
+          
+          // Chỉ thêm optimistic message nếu:
+          // 1. Chưa có trong history
+          // 2. (Được tạo trong 30 giây gần đây HOẶC là message vừa gửi) - để tránh stale optimistic messages
+          const isRecent = new Date(optimistic.createdAt).getTime() > Date.now() - 30000;
+          if (!existsInHistory && (isRecent || isRecentlySent)) {
             allMessages.push(optimistic);
+            console.log('[useLongPolling] 💾 Keeping optimistic message:', {
+              id: optimistic.id,
+              content: optimistic.content.substring(0, 50),
+              isRecentlySent,
+              isRecent
+            });
           }
         });
         
@@ -545,6 +589,13 @@ export function useLongPolling({
     // Thêm tin nhắn optimistic vào UI ngay lập tức (TRƯỚC KHI gửi)
     // Đảm bảo tin nhắn hiển thị ngay, không đợi server
     console.log('[useLongPolling] 🚀 Adding optimistic message to UI:', optimisticMessage.content.substring(0, 50));
+    
+    // Track message này để đảm bảo không bị mất khi loadHistory()
+    recentSentMessagesRef.current.add(optimisticMessage.id);
+    // Cleanup sau 30 giây
+    setTimeout(() => {
+      recentSentMessagesRef.current.delete(optimisticMessage.id);
+    }, 30000);
     
     // Update state ngay lập tức - React sẽ batch update nhưng vẫn render sớm
     setMessages(prev => {

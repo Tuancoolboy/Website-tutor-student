@@ -967,14 +967,21 @@ const Messages: React.FC = () => {
       
       await sendMessage(messageContent)
       
-      // Message is already added to state by sendMessage, no need to reload immediately
-      // Only reload history as fallback if message doesn't appear
+      // Optimistic message đã được thêm vào state ngay lập tức
+      // Socket.io sẽ gửi event 'new-message' để thay thế optimistic message
+      // KHÔNG cần gọi loadHistory() vì sẽ làm chậm và có thể override optimistic message
+      // Chỉ reload history nếu message không xuất hiện sau 5 giây (fallback)
       setTimeout(async () => {
-        const messageExists = messages.some(m => m.content === messageContent)
+        // Kiểm tra lại sau 5 giây - nếu vẫn không có thì reload (trường hợp socket.io fail)
+        const messageExists = messages.some(m => 
+          m.content === messageContent && 
+          (m.id.startsWith('temp_') || new Date(m.createdAt).getTime() > Date.now() - 6000)
+        )
         if (!messageExists) {
+          console.log('[Messages] ⚠️ Message not found after 5s, reloading history as fallback')
           await loadHistory()
         }
-      }, 1000)
+      }, 5000) // Tăng lên 5 giây để đợi Socket.io event
       
       // Reload conversations list to update lastMessage (debounced, won't reload if recent)
       reloadConversations()
