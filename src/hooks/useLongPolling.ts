@@ -323,6 +323,12 @@ export function useLongPolling({
         lastMessageIdRef.current = null;
       }
     } catch (error) {
+      // Không log error nếu là AbortError (bình thường khi conversationId thay đổi)
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Abort là behavior bình thường, không cần log
+        return;
+      }
+      
       const normalised = normaliseError(error);
       console.error('[useLongPolling] Load history error:', normalised);
       onErrorRef.current?.(normalised);
@@ -464,17 +470,28 @@ export function useLongPolling({
       createdAt: new Date().toISOString()
     };
 
-    // Thêm tin nhắn optimistic vào UI ngay lập tức
-    handleNewMessage(optimisticMessage);
+    // Thêm tin nhắn optimistic vào UI ngay lập tức (TRƯỚC KHI gửi)
+    // Đảm bảo tin nhắn hiển thị ngay, không đợi server
+    setMessages(prev => {
+      // Kiểm tra xem đã có tin nhắn này chưa
+      if (prev.some(existing => existing.id === optimisticMessage.id)) {
+        return prev;
+      }
+      const updated = [...prev, optimisticMessage];
+      updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      return updated;
+    });
+    
+    // Trigger callback để UI cập nhật ngay
+    onMessageRef.current?.(optimisticMessage);
 
     // Ưu tiên dùng Socket.io nếu đã kết nối
     if (socketRef.current?.connected) {
       try {
         // Đảm bảo đã join room trước khi gửi
-        if (currentConversationRef.current === conversationId) {
-          socketRef.current.emit('join-room', conversationId);
-        }
+        socketRef.current.emit('join-room', conversationId);
         socketRef.current.emit('send-message', payload);
+        console.log('[useLongPolling] ✅ Tin nhắn đã gửi qua Socket.io, optimistic message đã hiển thị');
         // Tin nhắn thật sẽ được nhận qua event 'new-message' và thay thế optimistic message
         return { success: true };
       } catch (error) {
