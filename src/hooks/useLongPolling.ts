@@ -95,9 +95,23 @@ export function useLongPolling({
     lastMessageIdRef.current = message.id;
 
     setMessages(prev => {
-      if (prev.some(existing => existing.id === message.id)) {
-        return prev;
+      // Kiểm tra xem đã có tin nhắn này chưa (theo ID hoặc content + time)
+      const existingIndex = prev.findIndex(existing => 
+        existing.id === message.id || 
+        (existing.id.startsWith('temp_') && 
+         existing.content === message.content && 
+         Math.abs(new Date(existing.createdAt).getTime() - new Date(message.createdAt).getTime()) < 5000)
+      );
+
+      if (existingIndex >= 0) {
+        // Thay thế optimistic message bằng tin nhắn thật
+        const updated = [...prev];
+        updated[existingIndex] = message;
+        updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        return updated;
       }
+
+      // Thêm tin nhắn mới
       const updated = [...prev, message];
       updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
       return updated;
@@ -413,26 +427,6 @@ export function useLongPolling({
       throw new Error('Nội dung tin nhắn không được để trống');
     }
 
-    const payload = {
-      conversationId,
-      content: trimmed,
-      type,
-      fileUrl
-    };
-
-    // Ưu tiên dùng Socket.io nếu đã kết nối
-    if (socketRef.current?.connected) {
-      try {
-        socketRef.current.emit('send-message', payload);
-        // Trả về ngay lập tức, tin nhắn sẽ được nhận qua event 'new-message'
-        return { success: true };
-      } catch (error) {
-        console.error('[useLongPolling] Socket emit error:', error);
-        // Fallback to REST API nếu socket emit thất bại
-      }
-    }
-
-    // Fallback: gọi API REST để đảm bảo tin nhắn được gửi
     const token = typeof window !== 'undefined'
       ? window.localStorage.getItem('token')
       : null;
@@ -441,17 +435,68 @@ export function useLongPolling({
       throw new Error('Không tìm thấy token xác thực');
     }
 
+    // Decode token để lấy userId
+    let userId: string | null = null;
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      userId = payload.userId;
+    } catch (e) {
+      console.error('[useLongPolling] Cannot decode token:', e);
+    }
+
+    const payload = {
+      conversationId,
+      content: trimmed,
+      type,
+      fileUrl
+    };
+
+    // Optimistic update: Hiển thị tin nhắn ngay lập tức
+    const optimisticMessage: Message = {
+      id: `temp_${Date.now()}_${Math.random()}`,
+      conversationId,
+      senderId: userId || 'unknown',
+      receiverId: '', // Sẽ được cập nhật khi nhận từ server
+      content: trimmed,
+      type,
+      fileUrl,
+      read: false,
+      createdAt: new Date().toISOString()
+    };
+
+    // Thêm tin nhắn optimistic vào UI ngay lập tức
+    handleNewMessage(optimisticMessage);
+
+    // Ưu tiên dùng Socket.io nếu đã kết nối
+    if (socketRef.current?.connected) {
+      try {
+        // Đảm bảo đã join room trước khi gửi
+        if (currentConversationRef.current === conversationId) {
+          socketRef.current.emit('join-room', conversationId);
+        }
+        socketRef.current.emit('send-message', payload);
+        // Tin nhắn thật sẽ được nhận qua event 'new-message' và thay thế optimistic message
+        return { success: true };
+      } catch (error) {
+        console.error('[useLongPolling] Socket emit error:', error);
+        // Fallback to REST API nếu socket emit thất bại
+      }
+    }
+
+    // Fallback: gọi API REST để đảm bảo tin nhắn được gửi
     const url = buildApiUrl(`/conversations/${conversationId}/messages`);
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token!}`
       },
       body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
+      // Xóa optimistic message nếu gửi thất bại
+      setMessages(prev => prev.filter(msg => msg.id !== optimisticMessage.id));
       const errorText = await response.text();
       throw new Error(
         `Gửi tin nhắn thất bại (${response.status}): ${errorText || response.statusText}`
@@ -460,6 +505,13 @@ export function useLongPolling({
 
     const data = await response.json();
     if (data?.success && data?.data) {
+      // Xóa optimistic message và thay thế bằng tin nhắn thật từ server
+      setMessages(prev => {
+        const filtered = prev.filter(msg => msg.id !== optimisticMessage.id);
+        const updated = [...filtered, data.data];
+        updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        return updated;
+      });
       handleNewMessage(data.data);
     }
 
