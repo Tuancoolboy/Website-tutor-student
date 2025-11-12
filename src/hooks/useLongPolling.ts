@@ -88,13 +88,23 @@ export function useLongPolling({
   }, []);
 
   const handleNewMessage = useCallback((message: Message) => {
+    console.log('[useLongPolling] 📨 handleNewMessage called:', {
+      messageId: message.id,
+      conversationId: message.conversationId,
+      currentConversationId: currentConversationRef.current,
+      content: message.content.substring(0, 50)
+    });
+    
     if (message.conversationId !== currentConversationRef.current) {
+      console.log('[useLongPolling] ⚠️ Message for different conversation, ignoring');
       return;
     }
 
     lastMessageIdRef.current = message.id;
 
     setMessages(prev => {
+      console.log('[useLongPolling] 📋 Current messages count:', prev.length);
+      
       // Kiểm tra xem đã có tin nhắn này chưa (theo ID hoặc content + time)
       const existingIndex = prev.findIndex(existing => 
         existing.id === message.id || 
@@ -105,19 +115,24 @@ export function useLongPolling({
 
       if (existingIndex >= 0) {
         // Thay thế optimistic message bằng tin nhắn thật
+        console.log('[useLongPolling] 🔄 Replacing optimistic message at index:', existingIndex);
         const updated = [...prev];
         updated[existingIndex] = message;
         updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        console.log('[useLongPolling] ✅ Message replaced, new count:', updated.length);
         return updated;
       }
 
       // Thêm tin nhắn mới
+      console.log('[useLongPolling] ➕ Adding new message');
       const updated = [...prev, message];
       updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      console.log('[useLongPolling] ✅ New message added, new count:', updated.length);
       return updated;
     });
 
     onMessageRef.current?.(message);
+    console.log('[useLongPolling] ✅ handleNewMessage callback triggered');
   }, []);
 
   useEffect(() => {
@@ -156,8 +171,10 @@ export function useLongPolling({
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      console.log('[useLongPolling] ✅ Socket.io connected:', socket.id);
       setIsConnected(true);
       if (currentConversationRef.current) {
+        console.log('[useLongPolling] Joining room:', currentConversationRef.current);
         socket.emit('join-room', currentConversationRef.current);
       }
     });
@@ -191,14 +208,24 @@ export function useLongPolling({
       onErrorRef.current?.(normalised);
     });
 
-    socket.on('new-message', handleNewMessage);
+    socket.on('new-message', (message: Message) => {
+      console.log('[useLongPolling] 📩 Received new-message event:', message.id, message.content.substring(0, 50));
+      handleNewMessage(message);
+    });
+    
+    // Listen for confirmation that message was sent
+    socket.on('message-sent', (data: any) => {
+      console.log('[useLongPolling] ✅ Message sent confirmation:', data);
+    });
 
     return () => {
+      console.log('[useLongPolling] 🧹 Cleaning up Socket.io listeners');
       socket.off('connect');
       socket.off('disconnect');
       socket.off('connect_error');
       socket.off('error');
       socket.off('new-message', handleNewMessage);
+      socket.off('message-sent');
       disconnectSocket();
     };
   }, [disconnectSocket, enabled, handleNewMessage]);
@@ -405,9 +432,13 @@ export function useLongPolling({
 
     if (socketRef.current?.connected) {
       if (previousConversationRef.current && previousConversationRef.current !== conversationId) {
+        console.log('[useLongPolling] 🚪 Leaving previous room:', previousConversationRef.current);
         socketRef.current.emit('leave-room', previousConversationRef.current);
       }
+      console.log('[useLongPolling] 🚪 Joining room:', conversationId);
       socketRef.current.emit('join-room', conversationId);
+    } else {
+      console.warn('[useLongPolling] ⚠️ Socket.io not connected, cannot join room');
     }
 
     previousConversationRef.current = conversationId;
@@ -472,32 +503,46 @@ export function useLongPolling({
 
     // Thêm tin nhắn optimistic vào UI ngay lập tức (TRƯỚC KHI gửi)
     // Đảm bảo tin nhắn hiển thị ngay, không đợi server
+    console.log('[useLongPolling] 🚀 Adding optimistic message to UI:', optimisticMessage.content.substring(0, 50));
     setMessages(prev => {
       // Kiểm tra xem đã có tin nhắn này chưa
       if (prev.some(existing => existing.id === optimisticMessage.id)) {
+        console.log('[useLongPolling] ⚠️ Optimistic message already exists, skipping');
         return prev;
       }
       const updated = [...prev, optimisticMessage];
       updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      console.log('[useLongPolling] ✅ Optimistic message added, total messages:', updated.length);
       return updated;
     });
     
     // Trigger callback để UI cập nhật ngay
     onMessageRef.current?.(optimisticMessage);
+    console.log('[useLongPolling] ✅ Optimistic message callback triggered');
 
     // Ưu tiên dùng Socket.io nếu đã kết nối
     if (socketRef.current?.connected) {
       try {
+        console.log('[useLongPolling] 📤 Sending message via Socket.io to room:', conversationId);
         // Đảm bảo đã join room trước khi gửi
         socketRef.current.emit('join-room', conversationId);
-        socketRef.current.emit('send-message', payload);
-        console.log('[useLongPolling] ✅ Tin nhắn đã gửi qua Socket.io, optimistic message đã hiển thị');
+        // Thêm callback để xác nhận message đã được gửi
+        socketRef.current.emit('send-message', payload, (response: any) => {
+          if (response && response.error) {
+            console.error('[useLongPolling] ❌ Server error sending message:', response.error);
+          } else {
+            console.log('[useLongPolling] ✅ Server confirmed message sent:', response);
+          }
+        });
+        console.log('[useLongPolling] ✅ Message emitted to Socket.io, waiting for new-message event');
         // Tin nhắn thật sẽ được nhận qua event 'new-message' và thay thế optimistic message
         return { success: true };
       } catch (error) {
-        console.error('[useLongPolling] Socket emit error:', error);
+        console.error('[useLongPolling] ❌ Socket emit error:', error);
         // Fallback to REST API nếu socket emit thất bại
       }
+    } else {
+      console.warn('[useLongPolling] ⚠️ Socket.io not connected, using REST API fallback');
     }
 
     // Fallback: gọi API REST để đảm bảo tin nhắn được gửi
