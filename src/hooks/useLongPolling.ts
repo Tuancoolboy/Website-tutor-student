@@ -4,7 +4,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, WEBSOCKET_URL } from '../env';
 
@@ -504,27 +503,27 @@ export function useLongPolling({
 
     // Thêm tin nhắn optimistic vào UI ngay lập tức (TRƯỚC KHI gửi)
     // Đảm bảo tin nhắn hiển thị ngay, không đợi server
-    // Sử dụng flushSync để force React render ngay lập tức (quan trọng trên production)
     console.log('[useLongPolling] 🚀 Adding optimistic message to UI:', optimisticMessage.content.substring(0, 50));
     
-    // Force sync update để đảm bảo UI render ngay lập tức
-    flushSync(() => {
-      setMessages(prev => {
-        // Kiểm tra xem đã có tin nhắn này chưa
-        if (prev.some(existing => existing.id === optimisticMessage.id)) {
-          console.log('[useLongPolling] ⚠️ Optimistic message already exists, skipping');
-          return prev;
-        }
-        const updated = [...prev, optimisticMessage];
-        updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-        console.log('[useLongPolling] ✅ Optimistic message added, total messages:', updated.length);
-        return updated;
-      });
+    // Update state ngay lập tức - React sẽ batch update nhưng vẫn render sớm
+    setMessages(prev => {
+      // Kiểm tra xem đã có tin nhắn này chưa
+      if (prev.some(existing => existing.id === optimisticMessage.id)) {
+        console.log('[useLongPolling] ⚠️ Optimistic message already exists, skipping');
+        return prev;
+      }
+      const updated = [...prev, optimisticMessage];
+      updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      console.log('[useLongPolling] ✅ Optimistic message added, total messages:', updated.length);
+      return updated;
     });
     
-    // Trigger callback để UI cập nhật ngay (sau khi state đã update)
-    onMessageRef.current?.(optimisticMessage);
-    console.log('[useLongPolling] ✅ Optimistic message callback triggered, UI should update now');
+    // Trigger callback ngay lập tức để UI có thể re-render
+    // Sử dụng setTimeout với delay 0 để đảm bảo state update được apply trước
+    setTimeout(() => {
+      onMessageRef.current?.(optimisticMessage);
+      console.log('[useLongPolling] ✅ Optimistic message callback triggered, UI should update now');
+    }, 0);
 
     // Ưu tiên dùng Socket.io nếu đã kết nối
     if (socketRef.current?.connected) {
