@@ -373,11 +373,13 @@ const Messages: React.FC = () => {
           usersListCacheTimeRef.current = now
         }
         
-        // Filter out current user
+        // Filter: only show tutors and students, exclude current user and admin/management
         const currentUserId = currentUser?.userId || currentUser?.id || ''
-        const otherUsers = usersList.filter((user: any) => 
-          user && user.id && user.id !== currentUserId
-        )
+        const otherUsers = usersList.filter((user: any) => {
+          if (!user || !user.id || user.id === currentUserId) return false
+          // Only show tutors and students, exclude admin and management
+          return user.role === 'tutor' || user.role === 'student'
+        })
         
         // Determine active users - Chỉ hiển thị users đang online (connected via WebSocket)
         // Không dựa vào message, chỉ dựa vào online status thực sự
@@ -764,10 +766,13 @@ const Messages: React.FC = () => {
       }
       
       if (usersList.length > 0) {
-        // Chỉ filter ra current user - hiển thị tất cả users khác (kể cả đã có conversation)
-        const filteredUsers = usersList.filter((user: any) => 
-          user && user.id && user.id !== currentUserId
-        )
+        // Filter: only show tutors and students, exclude current user and admin/management
+        const currentUserId = currentUser?.userId || currentUser?.id || ''
+        const filteredUsers = usersList.filter((user: any) => {
+          if (!user || !user.id || user.id === currentUserId) return false
+          // Only show tutors and students, exclude admin and management
+          return user.role === 'tutor' || user.role === 'student'
+        })
         setAvailableUsers(filteredUsers)
       } else {
         console.warn('[Student Messages] No users found in response. Response structure:', Object.keys(response || {}))

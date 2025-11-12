@@ -629,15 +629,14 @@ export function useLongPolling({
     if (socketRef.current?.connected) {
       try {
         console.log('[useLongPolling] 📤 Sending message via Socket.io to room:', conversationId);
-        // Đảm bảo đã join room trước khi gửi (join ngay lập tức)
-        // Socket.io sẽ tự động handle nếu đã join rồi
-        if (currentConversationRef.current === conversationId) {
-          socketRef.current.emit('join-room', conversationId);
-          // Đợi một chút để đảm bảo join room xong (không cần thiết nhưng để chắc chắn)
-          // Socket.io emit là async nhưng không cần await
-        }
         
-        // Gửi tin nhắn ngay lập tức
+        // LUÔN join room trước khi gửi message (không cần check currentConversationRef)
+        // Socket.io sẽ tự động handle nếu đã join rồi (không tạo duplicate)
+        console.log('[useLongPolling] 🚪 Joining room before sending:', conversationId);
+        socketRef.current.emit('join-room', conversationId);
+        
+        // Gửi tin nhắn ngay lập tức (không cần đợi join room xong)
+        // Socket.io sẽ queue message nếu chưa join room xong
         socketRef.current.emit('send-message', payload);
         console.log('[useLongPolling] ✅ Message emitted to Socket.io, optimistic message should be visible');
         console.log('[useLongPolling] 🔍 Waiting for new-message event from server...');

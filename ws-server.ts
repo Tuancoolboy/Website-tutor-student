@@ -136,11 +136,34 @@ io.on('connection', (socket) => {
 
   // Join conversation room
   socket.on('join-room', (conversationId: string) => {
-    socket.join(`conversation:${conversationId}`);
-    console.log(`[Socket.io] User ${userId} joined conversation ${conversationId}`);
+    const roomName = `conversation:${conversationId}`;
+    socket.join(roomName);
+    
+    // Check how many users are in the room after joining
+    const room = io.sockets.adapter.rooms.get(roomName);
+    console.log(`[Socket.io] User ${userId} joined conversation ${conversationId}, room: ${roomName}, users in room: ${room?.size || 0}`);
+    
+    // Verify conversation exists and user is a participant
+    // This prevents unauthorized users from joining rooms
+    storage.findById<Conversation>('conversations.json', conversationId)
+      .then(conversation => {
+        if (!conversation) {
+          console.warn(`[Socket.io] ⚠️ Conversation ${conversationId} not found, user ${userId} may have joined invalid room`);
+          return;
+        }
+        if (!conversation.participants.includes(userId)) {
+          console.warn(`[Socket.io] ⚠️ User ${userId} is not a participant of conversation ${conversationId}, leaving room`);
+          socket.leave(roomName);
+          return;
+        }
+        console.log(`[Socket.io] ✅ User ${userId} is authorized to join conversation ${conversationId}`);
+      })
+      .catch(error => {
+        console.error(`[Socket.io] Error verifying conversation ${conversationId}:`, error);
+      });
     
     // Notify others in the room
-    socket.to(`conversation:${conversationId}`).emit('user-joined', {
+    socket.to(roomName).emit('user-joined', {
       userId,
       conversationId
     });
@@ -224,12 +247,22 @@ io.on('connection', (socket) => {
       });
 
       // Broadcast to all users in the conversation room
-      io.to(`conversation:${conversationId}`).emit('new-message', newMessage);
+      // This includes both sender and receiver (if they're both in the room)
+      const roomName = `conversation:${conversationId}`;
+      const room = io.sockets.adapter.rooms.get(roomName);
+      console.log(`[Socket.io] Broadcasting message ${newMessage.id} to room ${roomName}, users in room:`, room?.size || 0);
+      
+      io.to(roomName).emit('new-message', newMessage);
 
       // Also send to receiver's personal room (for notifications)
-      io.to(`user:${receiverId}`).emit('new-message', newMessage);
+      // This ensures receiver gets the message even if not in conversation room
+      const receiverRoomName = `user:${receiverId}`;
+      const receiverRoom = io.sockets.adapter.rooms.get(receiverRoomName);
+      console.log(`[Socket.io] Broadcasting message ${newMessage.id} to receiver room ${receiverRoomName}, users in room:`, receiverRoom?.size || 0);
+      
+      io.to(receiverRoomName).emit('new-message', newMessage);
 
-      console.log(`[Socket.io] Message sent: ${newMessage.id} in conversation ${conversationId}`);
+      console.log(`[Socket.io] Message sent: ${newMessage.id} in conversation ${conversationId} to senderId: ${userId}, receiverId: ${receiverId}`);
     } catch (error: any) {
       console.error('[Socket.io] Error sending message:', error);
       socket.emit('error', { message: 'Lỗi gửi tin nhắn: ' + error.message });

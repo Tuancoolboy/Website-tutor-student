@@ -385,11 +385,13 @@ const Messages: React.FC = () => {
           usersListCacheTimeRef.current = now
         }
         
-        // Filter out current user
+        // Filter: only show tutors and students, exclude current user and admin/management
         const currentUserId = currentUser?.userId || currentUser?.id || ''
-        const otherUsers = usersList.filter((user: any) => 
-          user && user.id && user.id !== currentUserId
-        )
+        const otherUsers = usersList.filter((user: any) => {
+          if (!user || !user.id || user.id === currentUserId) return false
+          // Only show tutors and students, exclude admin and management
+          return user.role === 'tutor' || user.role === 'student'
+        })
         
         // Determine active users - Chỉ hiển thị users đang online (connected via WebSocket)
         // Không dựa vào message, chỉ dựa vào online status thực sự
@@ -791,10 +793,12 @@ const Messages: React.FC = () => {
       
       if (usersList.length > 0) {
         const currentUserId = currentUser?.userId || currentUser?.id || ''
-        // Chỉ filter ra current user - hiển thị tất cả users khác (kể cả đã có conversation)
-        const filteredUsers = usersList.filter((user: any) => 
-          user && user.id && user.id !== currentUserId
-        )
+        // Filter: only show tutors and students, exclude current user and admin/management
+        const filteredUsers = usersList.filter((user: any) => {
+          if (!user || !user.id || user.id === currentUserId) return false
+          // Only show tutors and students, exclude admin and management
+          return user.role === 'tutor' || user.role === 'student'
+        })
         setAvailableUsers(filteredUsers)
       } else {
         console.warn('[Tutor Messages] No users found in usersList')
@@ -891,11 +895,11 @@ const Messages: React.FC = () => {
         setShowNewConversationModal(false)
         setSearchUserQuery('')
       } else {
-        alert('Không thể tạo cuộc trò chuyện: ' + (response.error || 'Unknown error'))
+        alert('Failed to create conversation: ' + (response.error || 'Unknown error'))
       }
     } catch (error: any) {
       console.error('Failed to create conversation:', error)
-      alert('Không thể tạo cuộc trò chuyện: ' + (error.message || 'Unknown error'))
+      alert('Failed to create conversation: ' + (error.message || 'Unknown error'))
     } finally {
       setCreatingConversation(false)
     }
@@ -964,7 +968,7 @@ const Messages: React.FC = () => {
     
     // If no conversation selected, we need to create one first
     if (!selectedConversationId) {
-      alert('Vui lòng chọn hoặc tạo một cuộc trò chuyện trước khi gửi tin nhắn')
+      alert('Please select or create a conversation before sending a message')
       return
     }
 
@@ -1008,7 +1012,7 @@ const Messages: React.FC = () => {
       reloadConversations()
     } catch (error: any) {
       console.error('Failed to send message:', error)
-      alert('Không thể gửi tin nhắn: ' + (error.message || 'Unknown error'))
+      alert('Failed to send message: ' + (error.message || 'Unknown error'))
       // Restore message if sending failed
       setNewMessage(messageContent)
     } finally {
@@ -1039,14 +1043,14 @@ const Messages: React.FC = () => {
     // Validate file size (5MB)
     const maxSize = 5 * 1024 * 1024
     if (file.size > maxSize) {
-      alert(`File quá lớn. Kích thước tối đa là 5MB.`)
+      alert(`File is too large. Maximum size is 5MB.`)
       return
     }
 
     // Validate file type
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
     if (!allowedTypes.includes(file.type)) {
-      alert(`Loại file không được hỗ trợ. Các loại file được hỗ trợ: PDF, JPG, PNG, GIF, DOC, DOCX`)
+      alert(`File type not supported. Supported file types: PDF, JPG, PNG, GIF, DOC, DOCX`)
       return
     }
 
@@ -1085,7 +1089,7 @@ const Messages: React.FC = () => {
       reloadConversations()
     } catch (error: any) {
       console.error('Failed to upload file:', error)
-      alert('Không thể upload file: ' + (error.message || 'Unknown error'))
+      alert('Failed to upload file: ' + (error.message || 'Unknown error'))
     } finally {
       setUploadingFile(false)
     }
@@ -1340,20 +1344,20 @@ const Messages: React.FC = () => {
               <div className="overflow-y-auto h-[540px]">
                 {loading ? (
                   <div className="p-4 text-center">
-                    <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>Đang tải...</p>
+                    <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>Loading...</p>
                   </div>
                 ) : filteredConversations.length === 0 ? (
                   <div className="p-4 text-center">
-                    <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>
-                      {conversations.length === 0 
-                        ? 'Không có cuộc trò chuyện nào. Hãy bắt đầu một cuộc trò chuyện mới!' 
-                        : 'Không tìm thấy cuộc trò chuyện nào phù hợp với tìm kiếm của bạn.'}
-                    </p>
+                      <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>
+                        {conversations.length === 0 
+                         ? 'No conversations yet. Start a new conversation!' 
+                         : 'No conversations found matching your search.'}
+                      </p>
                     <button
                       onClick={handleOpenNewConversation}
                       className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                     >
-                      + Tạo cuộc trò chuyện mới
+                      + New Conversation
                     </button>
                   </div>
                 ) : (
@@ -2059,11 +2063,11 @@ const Messages: React.FC = () => {
                       user.name?.toLowerCase().includes(searchUserQuery.toLowerCase()) ||
                       user.email?.toLowerCase().includes(searchUserQuery.toLowerCase())
                     ).length === 0 && (
-                      <div className="text-center py-8">
-                        <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>
-                          {searchUserQuery ? 'Không tìm thấy người dùng nào' : 'Không có người dùng nào'}
-                        </p>
-                      </div>
+                        <div className="text-center py-8">
+                          <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>
+                           {searchUserQuery ? 'No users found' : 'No users available'}
+                          </p>
+                        </div>
                     )}
                   </>
                 )}
