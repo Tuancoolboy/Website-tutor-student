@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { io, Socket } from 'socket.io-client';
 import { API_BASE_URL, WEBSOCKET_URL } from '../env';
 
@@ -503,39 +504,47 @@ export function useLongPolling({
 
     // Thêm tin nhắn optimistic vào UI ngay lập tức (TRƯỚC KHI gửi)
     // Đảm bảo tin nhắn hiển thị ngay, không đợi server
+    // Sử dụng flushSync để force React render ngay lập tức (quan trọng trên production)
     console.log('[useLongPolling] 🚀 Adding optimistic message to UI:', optimisticMessage.content.substring(0, 50));
-    setMessages(prev => {
-      // Kiểm tra xem đã có tin nhắn này chưa
-      if (prev.some(existing => existing.id === optimisticMessage.id)) {
-        console.log('[useLongPolling] ⚠️ Optimistic message already exists, skipping');
-        return prev;
-      }
-      const updated = [...prev, optimisticMessage];
-      updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      console.log('[useLongPolling] ✅ Optimistic message added, total messages:', updated.length);
-      return updated;
+    
+    // Force sync update để đảm bảo UI render ngay lập tức
+    flushSync(() => {
+      setMessages(prev => {
+        // Kiểm tra xem đã có tin nhắn này chưa
+        if (prev.some(existing => existing.id === optimisticMessage.id)) {
+          console.log('[useLongPolling] ⚠️ Optimistic message already exists, skipping');
+          return prev;
+        }
+        const updated = [...prev, optimisticMessage];
+        updated.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        console.log('[useLongPolling] ✅ Optimistic message added, total messages:', updated.length);
+        return updated;
+      });
     });
     
-    // Trigger callback để UI cập nhật ngay
+    // Trigger callback để UI cập nhật ngay (sau khi state đã update)
     onMessageRef.current?.(optimisticMessage);
-    console.log('[useLongPolling] ✅ Optimistic message callback triggered');
+    console.log('[useLongPolling] ✅ Optimistic message callback triggered, UI should update now');
 
     // Ưu tiên dùng Socket.io nếu đã kết nối
     if (socketRef.current?.connected) {
       try {
         console.log('[useLongPolling] 📤 Sending message via Socket.io to room:', conversationId);
-        // Đảm bảo đã join room trước khi gửi
-        socketRef.current.emit('join-room', conversationId);
-        // Thêm callback để xác nhận message đã được gửi
-        socketRef.current.emit('send-message', payload, (response: any) => {
-          if (response && response.error) {
-            console.error('[useLongPolling] ❌ Server error sending message:', response.error);
-          } else {
-            console.log('[useLongPolling] ✅ Server confirmed message sent:', response);
-          }
-        });
-        console.log('[useLongPolling] ✅ Message emitted to Socket.io, waiting for new-message event');
+        // Đảm bảo đã join room trước khi gửi (join ngay lập tức)
+        // Socket.io sẽ tự động handle nếu đã join rồi
+        if (currentConversationRef.current === conversationId) {
+          socketRef.current.emit('join-room', conversationId);
+          // Đợi một chút để đảm bảo join room xong (không cần thiết nhưng để chắc chắn)
+          // Socket.io emit là async nhưng không cần await
+        }
+        
+        // Gửi tin nhắn ngay lập tức
+        socketRef.current.emit('send-message', payload);
+        console.log('[useLongPolling] ✅ Message emitted to Socket.io, optimistic message should be visible');
+        console.log('[useLongPolling] 🔍 Waiting for new-message event from server...');
+        
         // Tin nhắn thật sẽ được nhận qua event 'new-message' và thay thế optimistic message
+        // Nhưng optimistic message đã hiển thị rồi, không cần đợi
         return { success: true };
       } catch (error) {
         console.error('[useLongPolling] ❌ Socket emit error:', error);
@@ -543,6 +552,10 @@ export function useLongPolling({
       }
     } else {
       console.warn('[useLongPolling] ⚠️ Socket.io not connected, using REST API fallback');
+      console.warn('[useLongPolling] ⚠️ Socket connection status:', {
+        connected: socketRef.current?.connected,
+        id: socketRef.current?.id
+      });
     }
 
     // Fallback: gọi API REST để đảm bảo tin nhắn được gửi
