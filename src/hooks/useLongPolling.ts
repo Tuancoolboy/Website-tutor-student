@@ -66,6 +66,7 @@ export function useLongPolling({
   const previousConversationRef = useRef<string | null>(null);
   const historyAbortControllerRef = useRef<AbortController | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const onMessageRef = useRef(onMessage);
   const onErrorRef = useRef(onError);
@@ -188,6 +189,71 @@ export function useLongPolling({
     };
   }, [disconnectSocket, enabled, handleNewMessage]);
 
+  // Polling function để check tin nhắn mới (fallback khi socket.io không hoạt động)
+  const pollNewMessages = useCallback(async () => {
+    if (!conversationId || !lastMessageIdRef.current) {
+      return;
+    }
+
+    if (socketRef.current?.connected) {
+      // Nếu socket.io đã kết nối, không cần polling
+      return;
+    }
+
+    try {
+      const token = typeof window !== 'undefined'
+        ? window.localStorage.getItem('token')
+        : null;
+
+      if (!token) {
+        return;
+      }
+
+      // Lấy tất cả tin nhắn và filter tin nhắn mới
+      const url = buildApiUrl(`/conversations/${conversationId}/messages?page=1&limit=100`);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+      const allMessages: Message[] = Array.isArray(data?.data) ? data.data : [];
+
+      if (allMessages.length > 0) {
+        // Tìm tin nhắn mới hơn lastMessageId
+        const lastMessageIndex = allMessages.findIndex(msg => msg.id === lastMessageIdRef.current);
+        const newMessages = lastMessageIndex >= 0 
+          ? allMessages.slice(lastMessageIndex + 1)
+          : allMessages.filter(msg => {
+              if (!lastMessageIdRef.current) return true;
+              // So sánh theo thời gian nếu không tìm thấy ID
+              return new Date(msg.createdAt).getTime() > Date.now() - 10000; // Tin nhắn trong 10 giây gần đây
+            });
+
+        if (newMessages.length > 0) {
+          newMessages.forEach(msg => {
+            handleNewMessage(msg);
+          });
+          // Cập nhật lastMessageId
+          const sorted = [...allMessages].sort((a, b) => 
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+          if (sorted.length > 0) {
+            lastMessageIdRef.current = sorted[sorted.length - 1].id;
+          }
+        }
+      }
+    } catch (error) {
+      // Silent fail cho polling - không log error để tránh spam
+    }
+  }, [conversationId, handleNewMessage]);
+
   const loadHistory = useCallback(async () => {
     if (!conversationId) {
       setMessages([]);
@@ -254,12 +320,50 @@ export function useLongPolling({
     }
   }, [conversationId]);
 
+  // Polling fallback khi socket.io không kết nối được
+  useEffect(() => {
+    if (!enabled || !conversationId) {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Nếu socket.io đã kết nối, không cần polling
+    if (socketRef.current?.connected) {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // Bắt đầu polling mỗi 2 giây khi socket.io không kết nối được
+    if (!pollingIntervalRef.current) {
+      pollingIntervalRef.current = setInterval(() => {
+        void pollNewMessages();
+      }, 2000); // Poll mỗi 2 giây để real-time như Facebook
+    }
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [enabled, conversationId, isConnected, pollNewMessages]);
+
   useEffect(() => {
     currentConversationRef.current = conversationId;
 
     if (!enabled) {
       setMessages([]);
       lastMessageIdRef.current = null;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
@@ -270,6 +374,10 @@ export function useLongPolling({
       previousConversationRef.current = null;
       setMessages([]);
       lastMessageIdRef.current = null;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
