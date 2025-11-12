@@ -748,5 +748,25 @@
     "type": "text",
     "read": false,
     "createdAt": "2025-11-10T14:12:08.641Z"
+  },
+  {
+    "id": "msg_Jbgyg9d0w2u9",
+    "conversationId": "conv_0r4FVG5mlb_B",
+    "senderId": "tut_TNes434P5AEZ",
+    "receiverId": "tut_NrIX8Wa7MS0G",
+    "content": "chào",
+    "type": "text",
+    "read": false,
+    "createdAt": "2025-11-12T17:51:59.493Z"
+  },
+  {
+    "id": "msg_OW0U5vCcqrMg",
+    "conversationId": "conv_0r4FVG5mlb_B",
+    "senderId": "tut_NrIX8Wa7MS0G",
+    "receiverId": "tut_TNes434P5AEZ",
+    "content": "lô",
+    "type": "text",
+    "read": false,
+    "createdAt": "2025-11-12T17:52:16.116Z"
   }
 ]

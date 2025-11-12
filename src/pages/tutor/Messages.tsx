@@ -75,7 +75,7 @@ const Messages: React.FC = () => {
   const lastOnlineUsersRef = useRef<Set<string>>(new Set())
   const usersListCacheRef = useRef<any[]>([]) // Cache users list to avoid repeated fetches
   const usersListCacheTimeRef = useRef<number>(0) // Cache timestamp
-  const USERS_CACHE_DURATION = 5 * 60 * 1000 // Cache users for 5 minutes
+  const USERS_CACHE_DURATION = 10 * 60 * 1000 // Cache users for 10 minutes (tăng từ 5 phút)
 
   // Online Status Hook - Track which users are online via WebSocket
   const { onlineUsers, isUserOnline, isConnected: isWebSocketConnected } = useOnlineStatus({ enabled: true })
@@ -443,40 +443,79 @@ const Messages: React.FC = () => {
       }
     }
     
-    // Check if onlineUsers actually changed
+    // Check if onlineUsers actually changed (chỉ update khi có thay đổi thực sự)
     const currentOnlineUsersSet = new Set(onlineUsers || [])
     const onlineUsersChanged = 
       currentOnlineUsersSet.size !== lastOnlineUsersRef.current.size ||
       Array.from(currentOnlineUsersSet).some(id => !lastOnlineUsersRef.current.has(id)) ||
       Array.from(lastOnlineUsersRef.current).some(id => !currentOnlineUsersSet.has(id))
     
-    // Only load if:
-    // 1. We have currentUser
-    // 2. Online users actually changed (not just a re-render) OR no active users yet
-    // 3. Not already loading
-    if (currentUser && (onlineUsersChanged || activeUsers.length === 0)) {
+    // Update last known online users ngay lập tức (không cần đợi API)
+    if (onlineUsersChanged) {
+      lastOnlineUsersRef.current = currentOnlineUsersSet
+      
+      // Nếu đã có activeUsers, chỉ cần update online status (không cần gọi API)
+      if (activeUsers.length > 0 && usersListCacheRef.current.length > 0) {
+        // Update active users list dựa trên onlineUsers hiện tại (không cần gọi API)
+        const updatedActiveUsers = activeUsers.map(user => ({
+          ...user,
+          isActive: isUserOnline(user.id),
+          lastActivity: isUserOnline(user.id) ? new Date().toISOString() : user.lastActivity,
+          lastActivityTime: isUserOnline(user.id) ? Date.now() : user.lastActivityTime
+        })).filter(user => user.isActive) // Chỉ giữ users đang online
+        
+        // Chỉ update state nếu có thay đổi
+        setActiveUsers(prev => {
+          const prevIds = new Set(prev.map(u => u.id).sort())
+          const newIds = new Set(updatedActiveUsers.map(u => u.id).sort())
+          if (prevIds.size !== newIds.size || 
+              Array.from(prevIds).some(id => !newIds.has(id))) {
+            return updatedActiveUsers
+          }
+          return prev // Return same reference to prevent re-render
+        })
+      }
+    }
+    
+    // Chỉ load từ API khi:
+    // 1. Chưa có active users (lần đầu load)
+    // 2. Cache đã hết hạn (sau 5 phút)
+    // 3. Chưa có users list trong cache
+    const now = Date.now()
+    const cacheExpired = (now - usersListCacheTimeRef.current) > USERS_CACHE_DURATION
+    const needsInitialLoad = activeUsers.length === 0 && usersListCacheRef.current.length === 0
+    
+    if (currentUser && (needsInitialLoad || cacheExpired)) {
+      // Clear timeout trước nếu có
+      if (activeUsersTimeoutRef.current) {
+        clearTimeout(activeUsersTimeoutRef.current)
+      }
+      
       // Debounce: wait 2 seconds before loading to prevent rapid calls
-      // Use cache if onlineUsers changed (users list doesn't change often)
       activeUsersTimeoutRef.current = setTimeout(() => {
         if (!isLoadingActiveUsersRef.current) {
-          // Use cache when onlineUsers changed (only filter changes, not user list)
-          // Force refresh only if cache is invalid or no active users
-          const useCache = onlineUsersChanged && activeUsers.length > 0
+          // Chỉ gọi API khi cache hết hạn hoặc chưa có data
+          const useCache = !cacheExpired && usersListCacheRef.current.length > 0
           loadActiveUsers(useCache)
         }
-      }, 2000) // 2 seconds debounce (increased from 1 second)
+      }, 2000) // 2 seconds debounce
     }
     
     // Set up interval for periodic refresh (only if we have currentUser)
-    // Increased to 3 minutes to reduce load - optimized for 2-3 users testing
-    // Users list doesn't change often, so we can cache it longer
+    // Increased to 10 minutes to reduce load - users list doesn't change often
+    // Online status được update real-time qua WebSocket, không cần poll API
     if (currentUser) {
       activeUsersIntervalRef.current = setInterval(() => {
         if (!isLoadingActiveUsersRef.current) {
-          // Use cache for periodic refresh (only refresh online status)
-          loadActiveUsers(true) // Use cache - only filter by online status
+          // Chỉ refresh khi cache đã hết hạn
+          const now = Date.now()
+          const cacheExpired = (now - usersListCacheTimeRef.current) > USERS_CACHE_DURATION
+          if (cacheExpired) {
+            // Use cache for periodic refresh (only refresh online status)
+            loadActiveUsers(true) // Use cache - only filter by online status
+          }
         }
-      }, 180000) // Refresh every 3 minutes (increased from 90 seconds)
+      }, 600000) // Refresh every 10 minutes (chỉ khi cache hết hạn)
     }
     
     return () => {
