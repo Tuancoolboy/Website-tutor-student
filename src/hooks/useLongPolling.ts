@@ -128,12 +128,14 @@ export function useLongPolling({
     }
 
     const socket = io(WEBSOCKET_URL, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
       auth: { token },
       autoConnect: true,
       reconnection: true,
       reconnectionAttempts: 5,
-      reconnectionDelay: 1000
+      reconnectionDelay: 1000,
+      timeout: 20000,
+      forceNew: false
     });
 
     socketRef.current = socket;
@@ -152,6 +154,18 @@ export function useLongPolling({
     socket.on('connect_error', (err) => {
       const normalised = normaliseError(err);
       console.error('[useLongPolling] Socket connect error:', normalised);
+      console.error('[useLongPolling] Error details:', {
+        message: err.message,
+        ...(err as any).type && { type: (err as any).type },
+        ...(err as any).description && { description: (err as any).description }
+      });
+      
+      // Nếu lỗi authentication, thử refresh token
+      if (err.message?.includes('Authentication failed') || err.message?.includes('invalid signature')) {
+        console.warn('[useLongPolling] JWT authentication failed - token có thể không khớp với JWT_SECRET trên server');
+        console.warn('[useLongPolling] Đảm bảo JWT_SECRET trên Railway giống với JWT_SECRET trên Vercel/API server');
+      }
+      
       setIsConnected(false);
       onErrorRef.current?.(normalised);
     });
@@ -298,12 +312,19 @@ export function useLongPolling({
       fileUrl
     };
 
+    // Ưu tiên dùng Socket.io nếu đã kết nối
     if (socketRef.current?.connected) {
-      socketRef.current.emit('send-message', payload);
-      return { success: true };
+      try {
+        socketRef.current.emit('send-message', payload);
+        // Trả về ngay lập tức, tin nhắn sẽ được nhận qua event 'new-message'
+        return { success: true };
+      } catch (error) {
+        console.error('[useLongPolling] Socket emit error:', error);
+        // Fallback to REST API nếu socket emit thất bại
+      }
     }
 
-    // Fallback: gọi API REST để không mất tin nhắn
+    // Fallback: gọi API REST để đảm bảo tin nhắn được gửi
     const token = typeof window !== 'undefined'
       ? window.localStorage.getItem('token')
       : null;
