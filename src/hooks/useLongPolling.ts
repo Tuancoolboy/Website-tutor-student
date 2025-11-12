@@ -343,9 +343,50 @@ export function useLongPolling({
         .filter(Boolean)
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
-      setMessages(sorted);
+      // Giữ lại optimistic messages khi load history
+      // Chỉ merge với history, không replace hoàn toàn
+      setMessages(prev => {
+        // Tìm các optimistic messages (có ID bắt đầu bằng 'temp_')
+        const optimisticMessages = prev.filter(msg => msg.id.startsWith('temp_'));
+        
+        // Merge optimistic messages với history (loại bỏ duplicates)
+        const allMessages = [...sorted];
+        optimisticMessages.forEach(optimistic => {
+          // Chỉ thêm optimistic message nếu chưa có trong history
+          // và nếu nó được tạo trong 5 giây gần đây (để tránh stale optimistic messages)
+          const isRecent = new Date(optimistic.createdAt).getTime() > Date.now() - 5000;
+          const existsInHistory = sorted.some(msg => 
+            msg.id === optimistic.id || 
+            (msg.content === optimistic.content && 
+             Math.abs(new Date(msg.createdAt).getTime() - new Date(optimistic.createdAt).getTime()) < 5000)
+          );
+          if (isRecent && !existsInHistory) {
+            allMessages.push(optimistic);
+          }
+        });
+        
+        // Sort lại sau khi merge
+        const merged = allMessages.sort((a, b) => 
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        
+        // Cập nhật lastMessageId từ history (không phải từ optimistic)
+        const historyMessages = sorted.filter(msg => !msg.id.startsWith('temp_'));
+        if (historyMessages.length > 0) {
+          lastMessageIdRef.current = historyMessages[historyMessages.length - 1].id;
+        } else if (merged.length > 0 && !merged[merged.length - 1].id.startsWith('temp_')) {
+          lastMessageIdRef.current = merged[merged.length - 1].id;
+        }
+        
+        return merged;
+      });
+      
+      // Cập nhật lastMessageId từ sorted messages (không phải từ optimistic)
       if (sorted.length > 0) {
-        lastMessageIdRef.current = sorted[sorted.length - 1].id;
+        const realMessages = sorted.filter(msg => !msg.id.startsWith('temp_'));
+        if (realMessages.length > 0) {
+          lastMessageIdRef.current = realMessages[realMessages.length - 1].id;
+        }
       } else {
         lastMessageIdRef.current = null;
       }
