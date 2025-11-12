@@ -944,7 +944,23 @@ const Messages: React.FC = () => {
   }
 
   const handleSendMessage = async () => {
-    if ((!newMessage.trim() && !selectedFile) || sending || uploadingFile) return
+    console.log('[Tutor Messages] 📤 handleSendMessage called:', {
+      newMessage: newMessage.substring(0, 50),
+      selectedFile: !!selectedFile,
+      sending,
+      uploadingFile,
+      selectedConversationId
+    });
+    
+    if ((!newMessage.trim() && !selectedFile) || sending || uploadingFile) {
+      console.log('[Tutor Messages] ⚠️ Cannot send message:', {
+        emptyMessage: !newMessage.trim(),
+        noFile: !selectedFile,
+        sending,
+        uploadingFile
+      });
+      return;
+    }
     
     // If no conversation selected, we need to create one first
     if (!selectedConversationId) {
@@ -959,13 +975,18 @@ const Messages: React.FC = () => {
     }
     
     const messageContent = newMessage.trim()
-    if (!messageContent) return
+    if (!messageContent) {
+      console.log('[Tutor Messages] ⚠️ Empty message content');
+      return;
+    }
 
     try {
+      console.log('[Tutor Messages] ✅ Sending message:', messageContent.substring(0, 50));
       setSending(true)
       setNewMessage('') // Clear input immediately for better UX
       
       await sendMessage(messageContent)
+      console.log('[Tutor Messages] ✅ Message sent successfully');
       
       // Optimistic message đã được thêm vào state ngay lập tức
       // Socket.io sẽ gửi event 'new-message' để thay thế optimistic message

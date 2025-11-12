@@ -540,12 +540,23 @@ export function useLongPolling({
     type: 'text' | 'file' | 'image' = 'text',
     fileUrl?: string
   ) => {
+    console.log('[useLongPolling] 📝 sendMessage called:', {
+      content: content?.substring(0, 50),
+      type,
+      fileUrl: fileUrl ? 'yes' : 'no',
+      conversationId,
+      socketConnected: socketRef.current?.connected,
+      socketId: socketRef.current?.id
+    });
+    
     if (!conversationId) {
+      console.error('[useLongPolling] ❌ No conversation selected');
       throw new Error('Chưa chọn cuộc trò chuyện');
     }
 
     const trimmed = content?.trim();
-    if (!trimmed) {
+    if (!trimmed && !fileUrl) {
+      console.error('[useLongPolling] ❌ Empty message');
       throw new Error('Nội dung tin nhắn không được để trống');
     }
 
