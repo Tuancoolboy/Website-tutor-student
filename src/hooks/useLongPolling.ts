@@ -559,12 +559,9 @@ export function useLongPolling({
       return updated;
     });
     
-    // Trigger callback ngay lập tức để UI có thể re-render
-    // Sử dụng setTimeout với delay 0 để đảm bảo state update được apply trước
-    setTimeout(() => {
-      onMessageRef.current?.(optimisticMessage);
-      console.log('[useLongPolling] ✅ Optimistic message callback triggered, UI should update now');
-    }, 0);
+    // Trigger callback ngay lập tức - state đã được update, callback sẽ trigger re-render
+    onMessageRef.current?.(optimisticMessage);
+    console.log('[useLongPolling] ✅ Optimistic message callback triggered, UI should update now');
 
     // Ưu tiên dùng Socket.io nếu đã kết nối
     if (socketRef.current?.connected) {
